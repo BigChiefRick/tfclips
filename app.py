@@ -108,28 +108,16 @@ def clips():
         function play() {
             const player = document.getElementById('player');
             
-            // Try multiple Twitch player URLs
-            const playerUrls = [
-                `https://player.twitch.tv/?clip=${clips[i]}&parent=herokuapp.com&autoplay=true&muted=false`,
-                `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=herokuapp.com&autoplay=true&muted=false`,
-                `https://www.twitch.tv/embed/clips/${clips[i]}?parent=herokuapp.com&autoplay=true&muted=false`
-            ];
+            // Use the exact Heroku app domain as parent
+            const parentDomain = window.location.hostname; // This gets tf-clips-987c7b7b6cb8.herokuapp.com
             
-            // Try first URL
-            player.src = playerUrls[0];
+            const playerUrl = `https://player.twitch.tv/?clip=${clips[i]}&parent=${parentDomain}&autoplay=true&muted=false`;
+            
+            player.src = playerUrl;
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
             document.getElementById('progress').style.width = '0%';
-            
-            // Handle iframe errors and try fallback URLs
-            player.onerror = () => {
-                console.log('Player URL failed, trying backup...');
-                if (playerUrls[1]) {
-                    player.src = playerUrls[1];
-                    playerUrls.splice(1, 1); // Remove used URL
-                }
-            };
             
             let progress = 0;
             const timer = setInterval(() => {
