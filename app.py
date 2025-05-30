@@ -94,13 +94,11 @@ def clips():
         iframe { width: 100%; height: 100%; border: none; }
         .info { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border-left: 4px solid #9146ff; }
         .progress { position: absolute; bottom: 0; left: 0; height: 4px; background: #9146ff; transition: width 0.1s; }
-        .unmute { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #9146ff; color: white; padding: 20px; border-radius: 10px; cursor: pointer; z-index: 1000; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div id="unmute" class="unmute">Click to Enable Audio</div>
-        <iframe id="player" allow="autoplay; fullscreen; microphone; camera"></iframe>
+        <iframe id="player" allow="autoplay; fullscreen; microphone; camera; speaker-selection" allowfullscreen></iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of ''' + str(len(clip_ids)) + '''</div>
@@ -110,26 +108,14 @@ def clips():
     <script>
         const clips = ''' + clips_json + ''';
         let i = 0;
-        let started = false;
-        
-        document.getElementById('unmute').onclick = function() {
-            this.style.display = 'none';
-            started = true;
-            play();
-        };
-        
-        // Auto-click after 2 seconds for headless operation
-        setTimeout(() => {
-            if (!started) {
-                document.getElementById('unmute').click();
-            }
-        }, 2000);
         
         function play() {
             const domain = window.location.hostname;
             const player = document.getElementById('player');
             
-            player.src = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${domain}&autoplay=true&muted=false`;
+            // Force unmuted with multiple URL parameters
+            const embedUrl = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${domain}&autoplay=true&muted=false&volume=1`;
+            player.src = embedUrl;
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
@@ -151,6 +137,9 @@ def clips():
                 setTimeout(play, 100);
             }, 30000);
         }
+        
+        // Start playing immediately
+        setTimeout(play, 1000);
         
         console.log('Loaded ' + clips.length + ' TickleFitz clips dynamically');
     </script>
