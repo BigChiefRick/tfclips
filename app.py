@@ -1,333 +1,203 @@
-from flask import Flask
 import os
 import requests
-import json
-import subprocess
-import tempfile
-import re
+from flask import Flask, render_template, jsonify, request
 from datetime import datetime, timedelta
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Environment variables needed
-CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID')
-CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET')
-GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
-GITHUB_REPO = os.environ.get('GITHUB_REPO')  # format: "username/repo-name"
+# Twitch API configuration
+CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID', '')
+CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET', '')
+BROADCASTER_NAME = 'ticklefitz'
 
-class ClipManager:
+class TwitchAPI:
     def __init__(self):
-        self.clips_data = []
+        self.access_token = None
+        self.token_expires = None
+    
+    def get_access_token(self):
+        """Get OAuth token for Twitch API"""
+        if self.access_token and self.token_expires and datetime.now() < self.token_expires:
+            return self.access_token
         
-    def get_twitch_clips(self):
-        """Get top TickleFitz clips from Twitch API"""
+        url = 'https://id.twitch.tv/oauth2/token'
+        params = {
+            'client_id': CLIENT_ID,
+            'client_secret': CLIENT_SECRET,
+            'grant_type': 'client_credentials'
+        }
+        
         try:
-            # Get access token
-            token_response = requests.post('https://id.twitch.tv/oauth2/token', {
-                'client_id': CLIENT_ID,
-                'client_secret': CLIENT_SECRET,
-                'grant_type': 'client_credentials'
-            })
-            token = token_response.json()['access_token']
+            response = requests.post(url, params=params)
+            response.raise_for_status()
+            data = response.json()
             
-            headers = {
-                'Client-ID': CLIENT_ID,
-                'Authorization': f'Bearer {token}'
-            }
+            self.access_token = data['access_token']
+            # Set token to expire 1 hour before actual expiry for safety
+            self.token_expires = datetime.now() + timedelta(seconds=data['expires_in'] - 3600)
             
-            # Get TickleFitz user ID
-            user_response = requests.get('https://api.twitch.tv/helix/users?login=ticklefitz', headers=headers)
-            user_id = user_response.json()['data'][0]['id']
+            return self.access_token
+        except Exception as e:
+            logger.error(f"Failed to get access token: {e}")
+            return None
+    
+    def get_user_id(self, username):
+        """Get user ID from username"""
+        token = self.get_access_token()
+        if not token:
+            return None
+        
+        headers = {
+            'Client-ID': CLIENT_ID,
+            'Authorization': f'Bearer {token}'
+        }
+        
+        url = 'https://api.twitch.tv/helix/users'
+        params = {'login': username}
+        
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
             
-            # Get clips from last 30 days
-            start_time = (datetime.now() - timedelta(days=30)).isoformat() + 'Z'
-            clips_response = requests.get('https://api.twitch.tv/helix/clips', {
-                'broadcaster_id': user_id,
-                'first': 20,
-                'started_at': start_time
-            }, headers=headers)
+            if data['data']:
+                return data['data'][0]['id']
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get user ID: {e}")
+            return None
+    
+    def get_clips(self, broadcaster_id, count=10, period='week'):
+        """Get clips for a broadcaster"""
+        token = self.get_access_token()
+        if not token:
+            return []
+        
+        headers = {
+            'Client-ID': CLIENT_ID,
+            'Authorization': f'Bearer {token}'
+        }
+        
+        # Calculate date range based on period
+        end_time = datetime.now()
+        if period == 'day':
+            start_time = end_time - timedelta(days=1)
+        elif period == 'week':
+            start_time = end_time - timedelta(weeks=1)
+        elif period == 'month':
+            start_time = end_time - timedelta(days=30)
+        else:
+            start_time = end_time - timedelta(weeks=1)
+        
+        url = 'https://api.twitch.tv/helix/clips'
+        params = {
+            'broadcaster_id': broadcaster_id,
+            'first': min(count, 100),  # Twitch API limit
+            'started_at': start_time.isoformat() + 'Z',
+            'ended_at': end_time.isoformat() + 'Z'
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
             
-            clips = clips_response.json()['data']
+            clips = []
+            for clip in data.get('data', []):
+                clips.append({
+                    'id': clip['id'],
+                    'slug': clip['id'],  # In newer API, id is used as slug
+                    'title': clip['title'],
+                    'creator_name': clip['creator_name'],
+                    'view_count': clip['view_count'],
+                    'created_at': clip['created_at'],
+                    'thumbnail_url': clip['thumbnail_url'],
+                    'duration': clip['duration'],
+                    'embed_url': f"https://clips.twitch.tv/embed?clip={clip['id']}&parent=herokuapp.com&autoplay=false&muted=false"
+                })
+            
+            # Sort by view count descending
             clips.sort(key=lambda x: x['view_count'], reverse=True)
-            
-            self.clips_data = clips[:10]  # Top 10 clips to keep file sizes manageable
-            return True
+            return clips[:count]
             
         except Exception as e:
-            print(f"Error fetching clips: {e}")
-            return False
-    
-    def extract_mp4_url(self, thumbnail_url):
-        """Extract MP4 URL from thumbnail URL"""
-        # Try different patterns for Twitch CDN
-        patterns = [
-            r'(https://static-cdn\.jtvnw\.net/twitch-clips/[^/]+/[^-]+-offset-\d+)-preview-\d+x\d+\.jpg',
-            r'(https://clips-media-assets2\.twitch\.tv/.*)-preview',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, thumbnail_url)
-            if match:
-                return match.group(1) + '.mp4'
-        return None
-    
-    def download_clip(self, clip_id, mp4_url, filename):
-        """Download a clip MP4 file"""
-        try:
-            response = requests.get(mp4_url, stream=True, timeout=30)
-            if response.status_code == 200:
-                with open(filename, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                return True
-            return False
-        except:
-            return False
-    
-    def update_github_repo(self):
-        """Create manifest with direct Twitch clip URLs"""
-        if not GITHUB_TOKEN or not GITHUB_REPO:
-            print("ERROR: Missing GITHUB_TOKEN or GITHUB_REPO environment variables")
-            return False
-            
-        print(f"Starting GitHub update for repo: {GITHUB_REPO}")
-        print(f"Number of clips to process: {len(self.clips_data)}")
-            
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                print(f"Created temp directory: {temp_dir}")
-                
-                # Clone repo
-                repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-                print("Attempting to clone repository...")
-                
-                result = subprocess.run(['git', 'clone', repo_url, temp_dir], 
-                                      check=True, capture_output=True, text=True)
-                print(f"Git clone successful")
-                
-                os.chdir(temp_dir)
-                
-                # Create clips directory
-                clips_dir = 'clips'
-                os.makedirs(clips_dir, exist_ok=True)
-                print(f"Created clips directory: {clips_dir}")
-                
-                # Create manifest with direct Twitch URLs (no downloads needed)
-                clips_manifest = []
-                for i, clip in enumerate(self.clips_data):
-                    clip_url = f"https://clips.twitch.tv/embed?clip={clip['id']}&parent=tf-clips-987c7b7b6cb8.herokuapp.com&parent=classic.golightstream.com&autoplay=true&muted=false"
-                    
-                    clips_manifest.append({
-                        'id': clip['id'],
-                        'title': clip['title'],
-                        'url': clip_url,
-                        'view_count': clip['view_count'],
-                        'duration': clip['duration'],
-                        'creator_name': clip['creator_name']
-                    })
-                    print(f"Added clip {i+1}: {clip['title']}")
-                
-                # Create clips manifest
-                manifest_file = 'clips/manifest.json'
-                with open(manifest_file, 'w') as f:
-                    json.dump(clips_manifest, f, indent=2)
-                print(f"Created manifest with {len(clips_manifest)} clips")
-                
-                # Git operations
-                subprocess.run(['git', 'add', '.'], check=True, capture_output=True)
-                subprocess.run(['git', 'config', 'user.email', 'action@github.com'], check=True)
-                subprocess.run(['git', 'config', 'user.name', 'Clips Bot'], check=True)
-                subprocess.run(['git', 'commit', '-m', f'Update clips manifest - {datetime.now().strftime("%Y-%m-%d %H:%M")}'], check=True)
-                subprocess.run(['git', 'push'], check=True)
-                
-                print("GitHub update completed successfully!")
-                return len(clips_manifest)
-                
-        except subprocess.CalledProcessError as e:
-            print(f"Git command failed: {e}")
-            print(f"Stderr: {e.stderr}")
-            return False
-        except Exception as e:
-            print(f"GitHub update error: {e}")
-            return False
+            logger.error(f"Failed to get clips: {e}")
+            return []
 
-clip_manager = ClipManager()
+# Initialize Twitch API
+twitch_api = TwitchAPI()
 
 @app.route('/')
-def player():
-    """Main clips player page"""
+def index():
+    """Main page showing clips"""
+    count = request.args.get('count', 10, type=int)
+    period = request.args.get('period', 'week')
+    autoplay = request.args.get('autoplay', 'false').lower() == 'true'
     
-    # Try to get clips manifest from GitHub
-    try:
-        manifest_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/clips/manifest.json"
-        response = requests.get(manifest_url)
-        if response.status_code == 200:
-            clips = response.json()
-        else:
-            clips = []
-    except:
-        clips = []
+    # Limit count to reasonable range
+    count = max(1, min(count, 50))
     
-    if not clips:
-        return '''
-        <html>
-        <body style="background:#000;color:#fff;font-family:Arial;text-align:center;padding:50px;">
-            <h1>🎮 TickleFitz Clips Player</h1>
-            <p>No clips available yet. <a href="/update" style="color:#00d4ff;">Click here to fetch clips</a></p>
-        </body>
-        </html>
-        '''
-    
-    clips_json = json.dumps(clips)
-    base_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/"
-    
-    html = f'''
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ margin: 0; background: #000; color: #fff; font-family: Arial; overflow: hidden; }}
-        .container {{ width: 100vw; height: 100vh; position: relative; }}
-        video {{ width: 100%; height: 100%; object-fit: cover; }}
-        .info {{ 
-            position: absolute; bottom: 20px; left: 20px; 
-            background: rgba(0,0,0,0.8); padding: 15px; 
-            border-radius: 10px; border-left: 4px solid #9146ff; 
-        }}
-        .loading {{ 
-            position: absolute; top: 50%; left: 50%; 
-            transform: translate(-50%, -50%); text-align: center; 
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <video id="player" autoplay muted></video>
-        <div class="info">
-            <div id="title">TickleFitz Clips</div>
-            <div>Clip <span id="num">1</span> of {len(clips)}</div>
-            <div id="details" style="font-size:12px;color:#ccc;margin-top:5px;"></div>
-        </div>
-    </div>
-    <script>
-        const clips = {clips_json};
-        const baseUrl = "{base_url}";
-        let currentIndex = 0;
-        const player = document.getElementById('player');
-        
-        // Unmute on first user interaction
-        document.addEventListener('click', () => {{
-            player.muted = false;
-            console.log('Audio enabled');
-        }});
-        
-        // Auto-unmute attempt
-        setTimeout(() => {{
-            player.muted = false;
-        }}, 2000);
-        
-        function playClip() {{
-            if (clips.length === 0) return;
-            
-            const clip = clips[currentIndex];
-            
-            // Use the direct Twitch embed URL from manifest
-            const iframe = document.createElement('iframe');
-            iframe.src = clip.url;
-            iframe.style.width = '100%';
-            iframe.style.height = '100%';
-            iframe.style.border = 'none';
-            
-            // Replace current player
-            const container = document.querySelector('.container');
-            const oldPlayer = document.getElementById('player');
-            if (oldPlayer) oldPlayer.remove();
-            
-            iframe.id = 'player';
-            container.insertBefore(iframe, container.firstChild);
-            
-            document.getElementById('title').textContent = clip.title;
-            document.getElementById('num').textContent = currentIndex + 1;
-            document.getElementById('details').textContent = `Views: ${{clip.view_count.toLocaleString()}} | Creator: ${{clip.creator_name}}`;
-            
-            console.log(`Playing: ${{clip.title}} from Twitch`);
-            
-            currentIndex = (currentIndex + 1) % clips.length;
-            
-            // Auto-advance based on clip duration
-            setTimeout(playClip, (clip.duration + 2) * 1000);
-        }}
-        
-        // Auto-advance when video ends
-        player.addEventListener('ended', () => {{
-            setTimeout(playClip, 1000);
-        }});
-        
-        // Handle video errors
-        player.addEventListener('error', () => {{
-            console.log('Video error, trying next clip...');
-            setTimeout(playClip, 2000);
-        }});
-        
-        // Start playing
-        setTimeout(playClip, 1000);
-        
-        console.log(`Loaded ${{clips.length}} clips from GitHub storage`);
-    </script>
-</body>
-</html>
-    '''
-    
-    return html
+    return render_template('index.html', 
+                         broadcaster_name=BROADCASTER_NAME,
+                         count=count, 
+                         period=period,
+                         autoplay=autoplay)
 
-@app.route('/update')
-def update_clips():
-    """Manually trigger clips update"""
+@app.route('/api/clips')
+def api_clips():
+    """API endpoint to get clips data"""
+    count = request.args.get('count', 10, type=int)
+    period = request.args.get('period', 'week')
     
-    print("=== STARTING CLIPS UPDATE ===")
+    # Limit count to reasonable range
+    count = max(1, min(count, 50))
     
-    if not CLIENT_ID or not CLIENT_SECRET:
-        print("ERROR: Missing Twitch API credentials")
-        return "❌ Missing Twitch API credentials (TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)"
+    # Get broadcaster ID
+    broadcaster_id = twitch_api.get_user_id(BROADCASTER_NAME)
+    if not broadcaster_id:
+        return jsonify({'error': 'Failed to get broadcaster ID'}), 500
     
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        print("ERROR: Missing GitHub configuration")
-        return f"❌ Missing GitHub configuration. GITHUB_TOKEN: {'SET' if GITHUB_TOKEN else 'MISSING'}, GITHUB_REPO: {GITHUB_REPO or 'MISSING'}"
+    # Get clips
+    clips = twitch_api.get_clips(broadcaster_id, count, period)
     
-    print(f"Using GitHub repo: {GITHUB_REPO}")
-    
-    print("Fetching TickleFitz clips...")
-    if not clip_manager.get_twitch_clips():
-        print("ERROR: Failed to fetch clips from Twitch")
-        return "❌ Failed to fetch clips from Twitch API"
-    
-    print(f"Successfully fetched {len(clip_manager.clips_data)} clips")
-    
-    print("Updating GitHub repo...")
-    result = clip_manager.update_github_repo()
-    
-    if result:
-        print(f"SUCCESS: Updated {result} clips")
-        return f"✅ Successfully updated {result} clips! <a href='/'>View Player</a>"
-    else:
-        print("ERROR: Failed to update GitHub repo")
-        return "❌ Failed to update GitHub repo. Check Heroku logs for details."
+    return jsonify({
+        'clips': clips,
+        'broadcaster_name': BROADCASTER_NAME,
+        'count': len(clips),
+        'period': period
+    })
 
-@app.route('/status')
-def status():
-    """Show current status"""
-    try:
-        manifest_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/clips/manifest.json"
-        response = requests.get(manifest_url)
-        if response.status_code == 200:
-            clips = response.json()
-            return f"📊 {len(clips)} clips available in GitHub storage"
-        else:
-            return "No clips found in GitHub"
-    except:
-        return "Error checking GitHub status"
+@app.route('/stream')
+def stream_view():
+    """Stream-friendly view for OBS/streaming software"""
+    count = request.args.get('count', 5, type=int)
+    period = request.args.get('period', 'week')
+    interval = request.args.get('interval', 30, type=int)  # seconds between clips
+    
+    count = max(1, min(count, 20))
+    interval = max(10, min(interval, 300))  # 10 seconds to 5 minutes
+    
+    return render_template('stream.html',
+                         broadcaster_name=BROADCASTER_NAME,
+                         count=count,
+                         period=period,
+                         interval=interval)
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint"""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # Check if required environment variables are set
+    if not CLIENT_ID or not CLIENT_SECRET:
+        logger.warning("TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET environment variables are required")
+        logger.warning("The app will not function properly without these credentials")
+    
+    port = int(os.environ.get('PORT', 5000))  # Default port for Heroku
+    app.run(host='0.0.0.0', port=port, debug=False)
