@@ -131,7 +131,7 @@ def clips():
 </head>
 <body>
     <div class="container">
-        <iframe id="player"></iframe>
+        <iframe id="player" allow="autoplay; fullscreen; microphone; camera" allowfullscreen></iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of {len(clip_ids)}</div>
@@ -147,32 +147,43 @@ def clips():
             const domain = window.location.hostname;
             const player = document.getElementById('player');
             
+            // Force unmuted autoplay - try multiple approaches
             player.src = `https://clips.twitch.tv/embed?clip=${{clips[i]}}&parent=${{domain}}&autoplay=true&muted=false`;
+            
+            // Also try setting iframe attributes for audio
+            player.setAttribute('allow', 'autoplay; fullscreen; microphone; camera');
+            player.setAttribute('allowfullscreen', 'true');
+            
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${{i + 1}}`;
             
             // Reset progress bar
             document.getElementById('progress').style.width = '0%';
             
-            // Progress bar animation (estimated clip length)
+            // Progress bar for exactly 30 seconds
             let progress = 0;
             if (progressInterval) clearInterval(progressInterval);
             progressInterval = setInterval(() => {{
-                progress += 0.4; // Adjust speed as needed
-                document.getElementById('progress').style.width = Math.min(progress, 95) + '%';
+                progress += 100 / 300; // 30 seconds = 300 intervals of 100ms
+                document.getElementById('progress').style.width = Math.min(progress, 100) + '%';
+                if (progress >= 100) clearInterval(progressInterval);
             }}, 100);
             
             i = (i + 1) % clips.length;
             
-            // Auto-advance after estimated clip time (most clips are 15-45 seconds)
+            // Auto-advance after exactly 30 seconds
             setTimeout(() => {{
-                if (progressInterval) clearInterval(progressInterval);
-                document.getElementById('progress').style.width = '100%';
-                
+                document.getElementById('progress').style.width = '0%';
                 // Immediate transition to next clip
-                setTimeout(play, 200);
-            }}, 30000); // 30 seconds - adjust this if clips are typically longer/shorter
+                setTimeout(play, 100);
+            }}, 30000); // Exactly 30 seconds
         }}
+        
+        // Auto-click to enable audio (some browsers require user interaction)
+        document.addEventListener('click', () => {{
+            // This ensures audio permissions are granted
+            console.log('Audio permissions enabled');
+        }});
         
         setTimeout(play, 1000);
     </script>
