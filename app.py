@@ -6,252 +6,162 @@ import json
 
 app = Flask(__name__)
 
-# Twitch API credentials - set these as environment variables in Heroku
 CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET')
 
-def get_twitch_token():
-    """Get Twitch access token"""
-    if not CLIENT_ID or not CLIENT_SECRET:
-        return None
-    
-    try:
-        response = requests.post('https://id.twitch.tv/oauth2/token', {
-            'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET,
-            'grant_type': 'client_credentials'
-        }, timeout=10)
-        
-        if response.status_code == 200:
-            return response.json()['access_token']
-    except:
-        pass
-    return None
-
 def get_ticklefitz_clips():
-    """Fetch real TickleFitz clips from Twitch API"""
-    token = get_twitch_token()
-    if not token:
-        # Return fallback clips if no API access
-        return [
-            'AwkwardHelplessSalamanderSwiftRage',
-            'TameIntelligentChimpanzeeHassaanChop', 
-            'PowerfulHandsomeNarwhalM4xHeh',
-            'GloriousEagerDogePogChamp',
-            'InventiveRealTapirCorgiDerp',
-            'SmallCarefulSmoothieOMGScoots',
-            'FunnyBraveChickpeaPogChamp',
-            'ElegantLazyPigeonBibleThump',
-            'WildObedientShrimpSSSsss',
-            'CleverHealthyWormNotLikeThis'
-        ]
+    """Get real TickleFitz clips or return error"""
     
-    try:
-        headers = {
-            'Client-ID': CLIENT_ID,
-            'Authorization': f'Bearer {token}'
-        }
-        
-        # Get TickleFitz user ID
-        user_response = requests.get('https://api.twitch.tv/helix/users?login=ticklefitz', 
-                                   headers=headers, timeout=10)
-        
-        if user_response.status_code != 200:
-            return None
-        
-        user_data = user_response.json()
-        if not user_data['data']:
-            return None
-        
-        user_id = user_data['data'][0]['id']
-        
-        # Get clips from last 30 days
-        start_time = (datetime.now() - timedelta(days=30)).isoformat() + 'Z'
-        
-        clips_response = requests.get('https://api.twitch.tv/helix/clips', {
-            'broadcaster_id': user_id,
-            'first': 20,
-            'started_at': start_time
-        }, headers=headers, timeout=10)
-        
-        if clips_response.status_code == 200:
-            clips_data = clips_response.json()['data']
-            if clips_data:
-                # Sort by view count (most popular first)
-                clips_data.sort(key=lambda x: x['view_count'], reverse=True)
-                # Return just the clip IDs
-                return [clip['id'] for clip in clips_data]
+    if not CLIENT_ID or not CLIENT_SECRET:
+        raise Exception("Twitch API credentials not configured")
     
-    except:
-        pass
+    # Get access token
+    token_response = requests.post('https://id.twitch.tv/oauth2/token', {
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': 'client_credentials'
+    }, timeout=10)
     
-    return None
+    if token_response.status_code != 200:
+        raise Exception("Failed to get Twitch access token")
+    
+    token = token_response.json()['access_token']
+    
+    headers = {
+        'Client-ID': CLIENT_ID,
+        'Authorization': f'Bearer {token}'
+    }
+    
+    # Get TickleFitz user ID
+    user_response = requests.get('https://api.twitch.tv/helix/users?login=ticklefitz', 
+                               headers=headers, timeout=10)
+    
+    if user_response.status_code != 200:
+        raise Exception("Failed to find TickleFitz on Twitch")
+    
+    user_data = user_response.json()
+    if not user_data['data']:
+        raise Exception("TickleFitz user not found")
+    
+    user_id = user_data['data'][0]['id']
+    
+    # Get clips from last 30 days
+    start_time = (datetime.now() - timedelta(days=30)).isoformat() + 'Z'
+    
+    clips_response = requests.get('https://api.twitch.tv/helix/clips', {
+        'broadcaster_id': user_id,
+        'first': 20,
+        'started_at': start_time
+    }, headers=headers, timeout=10)
+    
+    if clips_response.status_code != 200:
+        raise Exception("Failed to fetch TickleFitz clips")
+    
+    clips_data = clips_response.json()['data']
+    
+    if not clips_data:
+        raise Exception("No TickleFitz clips found in the last 30 days")
+    
+    # Sort by view count (most popular first)
+    clips_data.sort(key=lambda x: x['view_count'], reverse=True)
+    
+    return [clip['id'] for clip in clips_data]
 
 @app.route('/')
 def clips():
-    # Get real TickleFitz clips
-    clip_ids = get_ticklefitz_clips()
-    
-    # If API failed, use fallback clips
-    if not clip_ids:
-        clip_ids = [
-            'AwkwardHelplessSalamanderSwiftRage',
-            'TameIntelligentChimpanzeeHassaanChop', 
-            'PowerfulHandsomeNarwhalM4xHeh',
-            'GloriousEagerDogePogChamp',
-            'InventiveRealTapirCorgiDerp',
-            'SmallCarefulSmoothieOMGScoots',
-            'FunnyBraveChickpeaPogChamp',
-            'ElegantLazyPigeonBibleThump',
-            'WildObedientShrimpSSSsss',
-            'CleverHealthyWormNotLikeThis'
-        ]
+    try:
+        clip_ids = get_ticklefitz_clips()
+    except Exception as e:
+        # Return error page if API fails
+        return f'''<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8">
+<style>body{{margin:0;background:#000;color:#fff;font-family:Arial;text-align:center;padding:50px;}}
+.error{{background:#e74c3c;padding:30px;border-radius:10px;max-width:600px;margin:0 auto;}}
+</style></head>
+<body><div class="error"><h1>Error Loading TickleFitz Clips</h1><p>{str(e)}</p>
+<p>Check Twitch API credentials in Heroku config vars.</p></div></body></html>'''
     
     clips_json = json.dumps(clip_ids)
     
-    html = f"""
-<!DOCTYPE html>
+    html = '''<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <style>
-        body {{ margin: 0; background: #000; color: #fff; font-family: Arial; overflow: hidden; }}
-        .container {{ width: 100vw; height: 100vh; position: relative; }}
-        iframe {{ width: 100%; height: 100%; border: none; }}
-        .info {{ 
-            position: absolute; bottom: 20px; left: 20px; 
-            background: rgba(0,0,0,0.8); padding: 15px; 
-            border-radius: 10px; border-left: 4px solid #9146ff; 
-        }}
-        .progress {{ 
-            position: absolute; bottom: 0; left: 0; height: 4px; 
-            background: #9146ff; transition: width 0.1s; 
-        }}
-        .unmute-overlay {{
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: flex; align-items: center; 
-            justify-content: center; z-index: 1000; cursor: pointer;
-        }}
-        .unmute-text {{
-            background: #9146ff; color: white; padding: 20px 40px;
-            border-radius: 10px; font-size: 18px; font-weight: bold;
-        }}
+        body { margin: 0; background: #000; color: #fff; font-family: Arial; overflow: hidden; }
+        .container { width: 100vw; height: 100vh; position: relative; }
+        iframe { width: 100%; height: 100%; border: none; }
+        .info { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border-left: 4px solid #9146ff; }
+        .progress { position: absolute; bottom: 0; left: 0; height: 4px; background: #9146ff; transition: width 0.1s; }
+        .unmute { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #9146ff; color: white; padding: 20px; border-radius: 10px; cursor: pointer; z-index: 1000; }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Unmute overlay - auto-clicks to enable audio -->
-        <div id="unmuteOverlay" class="unmute-overlay">
-            <div class="unmute-text">🔊 Click to Enable Audio (Auto-clicking...)</div>
-        </div>
-        
-        <iframe id="player" 
-                allow="autoplay; fullscreen; microphone; camera; speaker-selection" 
-                allowfullscreen
-                sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-presentation">
-        </iframe>
-        
+        <div id="unmute" class="unmute">Click to Enable Audio</div>
+        <iframe id="player" allow="autoplay; fullscreen; microphone; camera"></iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
-            <div>Clip <span id="num">1</span> of {len(clip_ids)}</div>
+            <div>Clip <span id="num">1</span> of ''' + str(len(clip_ids)) + '''</div>
         </div>
         <div id="progress" class="progress" style="width: 0%;"></div>
     </div>
     <script>
-        const clips = {clips_json};
+        const clips = ''' + clips_json + ''';
         let i = 0;
-        let progressInterval;
-        let audioEnabled = false;
+        let started = false;
         
-        // Auto-enable audio immediately
-        function enableAudio() {{
-            audioEnabled = true;
-            document.getElementById('unmuteOverlay').style.display = 'none';
-            console.log('Audio enabled for autoplay');
-        }}
+        document.getElementById('unmute').onclick = function() {
+            this.style.display = 'none';
+            started = true;
+            play();
+        };
         
-        // Multiple attempts to enable audio
-        document.addEventListener('DOMContentLoaded', () => {{
-            // Auto-click after 1 second
-            setTimeout(() => {{
-                enableAudio();
-                play();
-            }}, 1000);
-        }});
+        // Auto-click after 2 seconds for headless operation
+        setTimeout(() => {
+            if (!started) {
+                document.getElementById('unmute').click();
+            }
+        }, 2000);
         
-        // Manual click backup
-        document.getElementById('unmuteOverlay').addEventListener('click', () => {{
-            enableAudio();
-            if (!progressInterval) play();
-        }});
-        
-        function play() {{
+        function play() {
             const domain = window.location.hostname;
             const player = document.getElementById('player');
             
-            // Force unmuted with multiple parameters
-            const embedUrl = `https://clips.twitch.tv/embed?clip=${{clips[i]}}&parent=${{domain}}&autoplay=true&muted=false&volume=1.0&audio=true`;
-            
-            player.src = embedUrl;
-            
-            // Force iframe to allow audio
-            player.contentWindow && player.contentWindow.postMessage('{"event":"unmute"}', '*');
+            player.src = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${domain}&autoplay=true&muted=false`;
             
             document.getElementById('num').textContent = i + 1;
-            document.getElementById('title').textContent = `TickleFitz Clip ${{i + 1}}`;
-            
-            // Reset progress bar
+            document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
             document.getElementById('progress').style.width = '0%';
             
-            // Progress bar for exactly 30 seconds
+            // 30-second progress bar
             let progress = 0;
-            if (progressInterval) clearInterval(progressInterval);
-            progressInterval = setInterval(() => {{
-                progress += 100 / 300; // 30 seconds = 300 intervals of 100ms
+            const timer = setInterval(() => {
+                progress += 100 / 300; // 30 seconds
                 document.getElementById('progress').style.width = Math.min(progress, 100) + '%';
-                if (progress >= 100) clearInterval(progressInterval);
-            }}, 100);
-            
-            // Try to unmute via postMessage to iframe
-            setTimeout(() => {{
-                try {{
-                    player.contentWindow.postMessage('{{"method":"setVolume","args":[1]}}', '*');
-                    player.contentWindow.postMessage('{{"method":"setMuted","args":[false]}}', '*');
-                }} catch(e) {{
-                    console.log('Could not postMessage to iframe:', e);
-                }}
-            }}, 2000);
+                if (progress >= 100) clearInterval(timer);
+            }, 100);
             
             i = (i + 1) % clips.length;
             
-            // Auto-advance after exactly 30 seconds
-            setTimeout(() => {{
+            // Next clip after exactly 30 seconds
+            setTimeout(() => {
                 document.getElementById('progress').style.width = '0%';
                 setTimeout(play, 100);
-            }}, 30000);
-        }}
+            }, 30000);
+        }
         
-        // Global audio context unlock (for browsers that need it)
-        window.addEventListener('load', () => {{
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (AudioContext) {{
-                const ctx = new AudioContext();
-                if (ctx.state === 'suspended') {{
-                    ctx.resume().then(() => {{
-                        console.log('AudioContext resumed');
-                    }});
-                }}
-            }}
-        }});
+        console.log('Loaded ' + clips.length + ' TickleFitz clips dynamically');
     </script>
 </body>
-</html>
-    """
+</html>'''
+    
     return html
 
 @app.route('/refresh')
 def refresh():
-    """Endpoint to manually refresh clips"""
+    """Force refresh clips"""
     return clips()
 
 if __name__ == '__main__':
