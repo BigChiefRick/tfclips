@@ -91,7 +91,10 @@ def clips():
 </head>
 <body>
     <div class="container">
-        <iframe id="player"></iframe>
+        <iframe id="player" 
+                allow="autoplay; fullscreen; microphone; camera; speaker-selection" 
+                allowfullscreen>
+        </iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of ''' + str(len(clip_ids)) + '''</div>
@@ -103,16 +106,30 @@ def clips():
         let i = 0;
         
         function play() {
-            const domain = window.location.hostname;
             const player = document.getElementById('player');
             
-            // Use direct Twitch clip URL instead of embed
-            const clipUrl = `https://clips.twitch.tv/${clips[i]}`;
-            player.src = clipUrl;
+            // Try multiple Twitch player URLs
+            const playerUrls = [
+                `https://player.twitch.tv/?clip=${clips[i]}&parent=herokuapp.com&autoplay=true&muted=false`,
+                `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=herokuapp.com&autoplay=true&muted=false`,
+                `https://www.twitch.tv/embed/clips/${clips[i]}?parent=herokuapp.com&autoplay=true&muted=false`
+            ];
+            
+            // Try first URL
+            player.src = playerUrls[0];
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
             document.getElementById('progress').style.width = '0%';
+            
+            // Handle iframe errors and try fallback URLs
+            player.onerror = () => {
+                console.log('Player URL failed, trying backup...');
+                if (playerUrls[1]) {
+                    player.src = playerUrls[1];
+                    playerUrls.splice(1, 1); // Remove used URL
+                }
+            };
             
             let progress = 0;
             const timer = setInterval(() => {
@@ -129,20 +146,9 @@ def clips():
             }, 30000);
         }
         
-        // Auto-click the page to enable audio context
-        document.addEventListener('DOMContentLoaded', () => {
-            // Simulate user interaction for audio
-            const clickEvent = new MouseEvent('click', {
-                view: window,
-                bubbles: true,
-                cancelable: true
-            });
-            document.body.dispatchEvent(clickEvent);
-            
-            setTimeout(play, 1000);
-        });
+        setTimeout(play, 1000);
         
-        console.log('Loaded ' + clips.length + ' TickleFitz clips dynamically');
+        console.log('Loaded ' + clips.length + ' TickleFitz clips - trying player.twitch.tv');
     </script>
 </body>
 </html>'''
