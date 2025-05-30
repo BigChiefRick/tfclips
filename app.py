@@ -63,25 +63,25 @@ def get_ticklefitz_clips_with_mp4():
     
     clips_with_mp4 = []
     for clip in clips_data:
-        # Extract MP4 URL from thumbnail URL
+        # Extract MP4 URL from thumbnail URL - NEW TWITCH FORMAT
         thumbnail_url = clip['thumbnail_url']
         print(f"DEBUG: Processing clip '{clip['title']}'")
         print(f"DEBUG: Thumbnail URL: {thumbnail_url}")
         
-        # Try multiple regex patterns for different Twitch CDN formats
-        patterns = [
-            r'(https://clips-media-assets2\.twitch\.tv/.*)-preview',
-            r'(https://clips-media-assets\.twitch\.tv/.*)-preview', 
-            r'(https://production\.assets\.clips\.twitchcdn\.net/.*)-preview'
-        ]
+        # New Twitch format: https://static-cdn.jtvnw.net/twitch-clips/CLIPID/VODID-offset-TIME-preview-480x272.jpg
+        # MP4 format should be: https://static-cdn.jtvnw.net/twitch-clips/CLIPID/VODID-offset-TIME.mp4
         
         mp4_url = None
-        for pattern in patterns:
-            mp4_match = re.search(pattern, thumbnail_url)
-            if mp4_match:
-                mp4_url = mp4_match.group(1) + '.mp4'
-                print(f"DEBUG: Found MP4 URL: {mp4_url}")
-                break
+        
+        # Pattern for new Twitch CDN format
+        new_pattern = r'(https://static-cdn\.jtvnw\.net/twitch-clips/[^/]+/[^-]+-offset-\d+)-preview-\d+x\d+\.jpg'
+        mp4_match = re.search(new_pattern, thumbnail_url)
+        
+        if mp4_match:
+            mp4_url = mp4_match.group(1) + '.mp4'
+            print(f"DEBUG: Found MP4 URL: {mp4_url}")
+        else:
+            print(f"DEBUG: Could not extract MP4 URL from thumbnail")
         
         if mp4_url:
             clips_with_mp4.append({
@@ -91,8 +91,6 @@ def get_ticklefitz_clips_with_mp4():
                 'creator_name': clip['creator_name'],
                 'duration': clip['duration']
             })
-        else:
-            print(f"DEBUG: Could not extract MP4 URL from thumbnail")
     
     print(f"DEBUG: Found {len(clips_with_mp4)} clips with MP4 URLs out of {len(clips_data)} total clips")
     return clips_with_mp4
