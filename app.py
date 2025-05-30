@@ -63,12 +63,27 @@ def get_ticklefitz_clips_with_mp4():
     
     clips_with_mp4 = []
     for clip in clips_data:
-        # Extract MP4 URL from thumbnail URL (same as the genius method above)
+        # Extract MP4 URL from thumbnail URL
         thumbnail_url = clip['thumbnail_url']
-        mp4_match = re.search(r'(https://clips-media-assets2\.twitch\.tv/.*)-preview', thumbnail_url)
+        print(f"DEBUG: Processing clip '{clip['title']}'")
+        print(f"DEBUG: Thumbnail URL: {thumbnail_url}")
         
-        if mp4_match:
-            mp4_url = mp4_match.group(1) + '.mp4'
+        # Try multiple regex patterns for different Twitch CDN formats
+        patterns = [
+            r'(https://clips-media-assets2\.twitch\.tv/.*)-preview',
+            r'(https://clips-media-assets\.twitch\.tv/.*)-preview', 
+            r'(https://production\.assets\.clips\.twitchcdn\.net/.*)-preview'
+        ]
+        
+        mp4_url = None
+        for pattern in patterns:
+            mp4_match = re.search(pattern, thumbnail_url)
+            if mp4_match:
+                mp4_url = mp4_match.group(1) + '.mp4'
+                print(f"DEBUG: Found MP4 URL: {mp4_url}")
+                break
+        
+        if mp4_url:
             clips_with_mp4.append({
                 'title': clip['title'],
                 'mp4_url': mp4_url,
@@ -76,13 +91,29 @@ def get_ticklefitz_clips_with_mp4():
                 'creator_name': clip['creator_name'],
                 'duration': clip['duration']
             })
+        else:
+            print(f"DEBUG: Could not extract MP4 URL from thumbnail")
     
+    print(f"DEBUG: Found {len(clips_with_mp4)} clips with MP4 URLs out of {len(clips_data)} total clips")
     return clips_with_mp4
 
 @app.route('/')
 def clips():
     try:
         clips_data = get_ticklefitz_clips_with_mp4()
+        if not clips_data:
+            # If no MP4 URLs found, show debug info
+            return '''<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8">
+<style>body{margin:0;background:#000;color:#fff;font-family:Arial;padding:20px;}
+pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
+</style></head>
+<body>
+<h1>Debug: No MP4 URLs Found</h1>
+<p>Check Heroku logs for thumbnail URL patterns.</p>
+<p>The regex might need updating for current Twitch CDN format.</p>
+</body></html>'''
     except Exception as e:
         return f'''<!DOCTYPE html>
 <html>
