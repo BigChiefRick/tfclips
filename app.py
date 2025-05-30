@@ -85,7 +85,7 @@ class ClipManager:
             return False
     
     def update_github_repo(self):
-        """Download clips and update GitHub repo"""
+        """Create manifest with direct Twitch clip URLs"""
         if not GITHUB_TOKEN or not GITHUB_REPO:
             print("ERROR: Missing GITHUB_TOKEN or GITHUB_REPO environment variables")
             return False
@@ -103,85 +103,52 @@ class ClipManager:
                 
                 result = subprocess.run(['git', 'clone', repo_url, temp_dir], 
                                       check=True, capture_output=True, text=True)
-                print(f"Git clone successful: {result.stdout}")
+                print(f"Git clone successful")
                 
                 os.chdir(temp_dir)
-                print(f"Changed to directory: {os.getcwd()}")
                 
                 # Create clips directory
                 clips_dir = 'clips'
                 os.makedirs(clips_dir, exist_ok=True)
                 print(f"Created clips directory: {clips_dir}")
                 
-                successful_clips = []
-                
-                # Download each clip
+                # Create manifest with direct Twitch URLs (no downloads needed)
+                clips_manifest = []
                 for i, clip in enumerate(self.clips_data):
-                    print(f"Processing clip {i+1}: {clip['title']}")
-                    print(f"Thumbnail URL: {clip['thumbnail_url']}")
+                    clip_url = f"https://clips.twitch.tv/embed?clip={clip['id']}&parent=tf-clips-987c7b7b6cb8.herokuapp.com&parent=classic.golightstream.com&autoplay=true&muted=false"
                     
-                    mp4_url = self.extract_mp4_url(clip['thumbnail_url'])
-                    print(f"Extracted MP4 URL: {mp4_url}")
-                    
-                    if mp4_url:
-                        filename = f"{clips_dir}/clip_{i+1}_{clip['id']}.mp4"
-                        print(f"Attempting to download to: {filename}")
-                        
-                        if self.download_clip(clip['id'], mp4_url, filename):
-                            file_size = os.path.getsize(filename)
-                            print(f"Successfully downloaded: {filename} ({file_size} bytes)")
-                            
-                            successful_clips.append({
-                                'id': clip['id'],
-                                'title': clip['title'],
-                                'filename': filename,
-                                'view_count': clip['view_count'],
-                                'duration': clip['duration'],
-                                'creator_name': clip['creator_name']
-                            })
-                        else:
-                            print(f"Failed to download: {filename}")
-                    else:
-                        print(f"Could not extract MP4 URL from thumbnail")
-                
-                print(f"Successfully downloaded {len(successful_clips)} clips")
+                    clips_manifest.append({
+                        'id': clip['id'],
+                        'title': clip['title'],
+                        'url': clip_url,
+                        'view_count': clip['view_count'],
+                        'duration': clip['duration'],
+                        'creator_name': clip['creator_name']
+                    })
+                    print(f"Added clip {i+1}: {clip['title']}")
                 
                 # Create clips manifest
                 manifest_file = 'clips/manifest.json'
                 with open(manifest_file, 'w') as f:
-                    json.dump(successful_clips, f, indent=2)
-                print(f"Created manifest file: {manifest_file}")
+                    json.dump(clips_manifest, f, indent=2)
+                print(f"Created manifest with {len(clips_manifest)} clips")
                 
                 # Git operations
-                print("Adding files to git...")
                 subprocess.run(['git', 'add', '.'], check=True, capture_output=True)
-                
-                print("Setting git config...")
                 subprocess.run(['git', 'config', 'user.email', 'action@github.com'], check=True)
                 subprocess.run(['git', 'config', 'user.name', 'Clips Bot'], check=True)
-                
-                print("Committing changes...")
-                commit_result = subprocess.run(['git', 'commit', '-m', f'Update clips - {datetime.now().strftime("%Y-%m-%d %H:%M")}'], 
-                                             check=True, capture_output=True, text=True)
-                print(f"Commit result: {commit_result.stdout}")
-                
-                print("Pushing to GitHub...")
-                push_result = subprocess.run(['git', 'push'], check=True, capture_output=True, text=True)
-                print(f"Push result: {push_result.stdout}")
+                subprocess.run(['git', 'commit', '-m', f'Update clips manifest - {datetime.now().strftime("%Y-%m-%d %H:%M")}'], check=True)
+                subprocess.run(['git', 'push'], check=True)
                 
                 print("GitHub update completed successfully!")
-                return len(successful_clips)
+                return len(clips_manifest)
                 
         except subprocess.CalledProcessError as e:
             print(f"Git command failed: {e}")
-            print(f"Return code: {e.returncode}")
-            print(f"Stdout: {e.stdout}")
             print(f"Stderr: {e.stderr}")
             return False
         except Exception as e:
             print(f"GitHub update error: {e}")
-            import traceback
-            print(f"Full traceback: {traceback.format_exc()}")
             return False
 
 clip_manager = ClipManager()
@@ -264,17 +231,32 @@ def player():
             if (clips.length === 0) return;
             
             const clip = clips[currentIndex];
-            const videoUrl = baseUrl + clip.filename;
             
-            player.src = videoUrl;
+            // Use the direct Twitch embed URL from manifest
+            const iframe = document.createElement('iframe');
+            iframe.src = clip.url;
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.border = 'none';
+            
+            // Replace current player
+            const container = document.querySelector('.container');
+            const oldPlayer = document.getElementById('player');
+            if (oldPlayer) oldPlayer.remove();
+            
+            iframe.id = 'player';
+            container.insertBefore(iframe, container.firstChild);
             
             document.getElementById('title').textContent = clip.title;
             document.getElementById('num').textContent = currentIndex + 1;
             document.getElementById('details').textContent = `Views: ${{clip.view_count.toLocaleString()}} | Creator: ${{clip.creator_name}}`;
             
-            console.log(`Playing: ${{clip.title}} from GitHub`);
+            console.log(`Playing: ${{clip.title}} from Twitch`);
             
             currentIndex = (currentIndex + 1) % clips.length;
+            
+            // Auto-advance based on clip duration
+            setTimeout(playClip, (clip.duration + 2) * 1000);
         }}
         
         // Auto-advance when video ends
