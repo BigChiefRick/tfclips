@@ -9,226 +9,96 @@ app = Flask(__name__)
 CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET')
 
-def get_ticklefitz_clips():
+def get_ticklefitz_top_clips():
     if not CLIENT_ID or not CLIENT_SECRET:
-        raise Exception("Twitch API credentials not configured")
+        raise Exception("Missing Twitch API credentials")
     
+    # Get access token
     token_response = requests.post('https://id.twitch.tv/oauth2/token', {
         'client_id': CLIENT_ID,
         'client_secret': CLIENT_SECRET,
         'grant_type': 'client_credentials'
-    }, timeout=10)
-    
-    if token_response.status_code != 200:
-        raise Exception("Failed to get Twitch access token")
+    })
     
     token = token_response.json()['access_token']
-    
     headers = {
         'Client-ID': CLIENT_ID,
         'Authorization': f'Bearer {token}'
     }
     
-    user_response = requests.get('https://api.twitch.tv/helix/users?login=ticklefitz', 
-                               headers=headers, timeout=10)
+    # Get TickleFitz user ID
+    user_response = requests.get('https://api.twitch.tv/helix/users?login=ticklefitz', headers=headers)
+    user_id = user_response.json()['data'][0]['id']
     
-    if user_response.status_code != 200:
-        raise Exception("Failed to find TickleFitz on Twitch")
-    
-    user_data = user_response.json()
-    if not user_data['data']:
-        raise Exception("TickleFitz user not found")
-    
-    user_id = user_data['data'][0]['id']
-    
+    # Get clips from last 30 days
     start_time = (datetime.now() - timedelta(days=30)).isoformat() + 'Z'
-    
     clips_response = requests.get('https://api.twitch.tv/helix/clips', {
         'broadcaster_id': user_id,
         'first': 20,
         'started_at': start_time
-    }, headers=headers, timeout=10)
+    }, headers=headers)
     
-    if clips_response.status_code != 200:
-        raise Exception("Failed to fetch TickleFitz clips")
+    clips = clips_response.json()['data']
     
-    clips_data = clips_response.json()['data']
+    # Sort by view count
+    clips.sort(key=lambda x: x['view_count'], reverse=True)
     
-    if not clips_data:
-        raise Exception("No TickleFitz clips found in the last 30 days")
-    
-    clips_data.sort(key=lambda x: x['view_count'], reverse=True)
-    
-    return clips_data
+    return clips
 
 @app.route('/')
-def clips():
+def player():
     try:
-        clips_data = get_ticklefitz_clips()
-    except Exception as e:
-        return f'''<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8">
-<style>body{{margin:0;background:#000;color:#fff;font-family:Arial;text-align:center;padding:50px;}}
-.error{{background:#e74c3c;padding:30px;border-radius:10px;max-width:600px;margin:0 auto;}}
-</style></head>
-<body><div class="error"><h1>Error Loading TickleFitz Clips</h1><p>{str(e)}</p>
-<p>Check Twitch API credentials in Heroku config vars.</p></div></body></html>'''
+        clips = get_ticklefitz_top_clips()
+    except:
+        clips = []
     
-    clips_json = json.dumps(clips_data)
+    clips_json = json.dumps(clips)
     
-    html = '''<!DOCTYPE html>
+    html = f'''
+<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: Arial; overflow: hidden; }
-        .container { width: 100vw; height: 100vh; position: relative; }
-        #twitch-embed { width: 100%; height: 100%; }
-        .info { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border-left: 4px solid #9146ff; z-index: 100; }
-        .progress { position: absolute; bottom: 0; left: 0; height: 4px; background: #9146ff; transition: width 0.1s; z-index: 100; }
+        body {{ margin: 0; background: #000; color: #fff; font-family: Arial; overflow: hidden; }}
+        .container {{ width: 100vw; height: 100vh; position: relative; }}
+        iframe {{ width: 100%; height: 100%; border: none; }}
+        .info {{ position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; }}
     </style>
-    <!-- Load Twitch Embed JavaScript API -->
-    <script src="https://embed.twitch.tv/embed/v1.js"></script>
 </head>
 <body>
     <div class="container">
-        <div id="twitch-embed"></div>
+        <iframe id="player"></iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
-            <div>Clip <span id="num">1</span> of ''' + str(len(clips_data)) + '''</div>
-            <div id="details" style="font-size: 12px; color: #ccc; margin-top: 5px;"></div>
+            <div>Clip <span id="num">1</span> of {len(clips)}</div>
         </div>
-        <div id="progress" class="progress" style="width: 0%;"></div>
     </div>
     <script>
-        const clips = ''' + clips_json + ''';
-        let currentIndex = 0;
-        let embed = null;
-        let player = null;
-        let progressTimer = null;
+        const clips = {clips_json};
+        let index = 0;
         
-        // Get the current hostname for parent parameter
-        const parentDomain = window.location.hostname;
-        console.log('Using parent domain:', parentDomain);
-        
-        function initializeTwitchEmbed() {
-            console.log('Initializing Twitch Embed...');
-            
-            embed = new Twitch.Embed("twitch-embed", {
-                width: "100%",
-                height: "100%",
-                channel: "ticklefitz", // Initialize with channel first
-                autoplay: false,
-                muted: false,
-                parent: ["tf-clips-987c7b7b6cb8.herokuapp.com", "classic.golightstream.com"],
-                layout: "video"
-            });
-            
-            // Wait for embed to be ready
-            embed.addEventListener(Twitch.Embed.VIDEO_READY, () => {
-                console.log('Twitch embed ready');
-                player = embed.getPlayer();
-                
-                console.log('Player object:', player);
-                console.log('Player methods:', Object.getOwnPropertyNames(player));
-                
-                // Check if player has the methods we need
-                if (typeof player.setClip === 'function') {
-                    console.log('Player has setClip method');
-                    setTimeout(() => loadClip(currentIndex), 2000);
-                } else {
-                    console.log('Player does not have setClip method');
-                    console.log('Available methods:', Object.getOwnPropertyNames(player.__proto__));
-                }
-                
-                // Try different event listener methods
-                if (typeof player.addEventListener === 'function') {
-                    player.addEventListener(Twitch.Player.ENDED, onVideoEnd);
-                } else if (typeof player.on === 'function') {
-                    player.on('ended', onVideoEnd);
-                } else {
-                    console.log('No event listener method found on player');
-                }
-            });
-        }
-        
-        function onPlayerReady() {
-            console.log('Player is ready');
-            // Try to unmute
-            player.setMuted(false);
-            player.setVolume(1.0);
-        }
-        
-        function onVideoEnd() {
-            console.log('Video ended, loading next clip...');
-            currentIndex = (currentIndex + 1) % clips.length;
-            setTimeout(() => loadClip(currentIndex), 1000);
-        }
-        
-        function onVideoPlay() {
-            console.log('Video started playing');
-            // Try to unmute when video starts
-            player.setMuted(false);
-        }
-        
-        function onVideoPause() {
-            console.log('Video paused');
-        }
-        
-        function loadClip(index) {
-            if (!player || clips.length === 0) return;
+        function playClip() {{
+            if (clips.length === 0) return;
             
             const clip = clips[index];
-            console.log(`Loading clip ${index + 1}: ${clip.title}`);
+            const embedUrl = `https://clips.twitch.tv/embed?clip=${{clip.id}}&parent=tf-clips-987c7b7b6cb8.herokuapp.com&parent=classic.golightstream.com&autoplay=true&muted=false`;
             
-            // Update UI
+            document.getElementById('player').src = embedUrl;
             document.getElementById('title').textContent = clip.title;
             document.getElementById('num').textContent = index + 1;
-            document.getElementById('details').textContent = `👁️ ${clip.view_count.toLocaleString()} views • 👤 ${clip.creator_name}`;
             
-            // Reset progress bar
-            document.getElementById('progress').style.width = '0%';
+            console.log(`Playing: ${{clip.title}} (${{clip.view_count}} views)`);
             
-            // Load the clip in the player
-            player.setClip(clip.id);
-            
-            // Start progress simulation (since we can't get exact duration easily)
-            startProgressBar(clip.duration);
-        }
+            index = (index + 1) % clips.length;
+            setTimeout(playClip, clip.duration * 1000 + 2000);
+        }}
         
-        function startProgressBar(duration) {
-            if (progressTimer) clearInterval(progressTimer);
-            
-            let progress = 0;
-            const increment = 100 / (duration * 10); // Update every 100ms
-            
-            progressTimer = setInterval(() => {
-                progress += increment;
-                document.getElementById('progress').style.width = Math.min(progress, 100) + '%';
-                
-                if (progress >= 100) {
-                    clearInterval(progressTimer);
-                }
-            }, 100);
-        }
-        
-        // Manual click to enable audio
-        document.addEventListener('click', () => {
-            if (player) {
-                player.setMuted(false);
-                console.log('Manual unmute attempt');
-            }
-        });
-        
-        // Initialize when page loads
-        window.addEventListener('load', () => {
-            console.log(`Loaded ${clips.length} TickleFitz clips`);
-            setTimeout(initializeTwitchEmbed, 1000);
-        });
+        setTimeout(playClip, 1000);
     </script>
 </body>
-</html>'''
+</html>
+    '''
     
     return html
 
