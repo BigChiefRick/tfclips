@@ -108,16 +108,36 @@ def clips():
         function play() {
             const player = document.getElementById('player');
             
-            // Use the exact Heroku app domain as parent
             const parentDomain = window.location.hostname;
-            
-            // Try different Twitch player URL formats
             const playerUrl = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${parentDomain}&autoplay=true&muted=false`;
             
             player.src = playerUrl;
             
             console.log(`Playing clip: ${clips[i]} with parent: ${parentDomain}`);
-            console.log(`URL: ${playerUrl}`);
+            
+            // Force unmute after iframe loads
+            player.onload = function() {
+                setTimeout(() => {
+                    try {
+                        // Try to post unmute message to Twitch iframe
+                        player.contentWindow.postMessage({
+                            'event': 'command',
+                            'func': 'unMute',
+                            'args': []
+                        }, '*');
+                        
+                        player.contentWindow.postMessage({
+                            'event': 'command', 
+                            'func': 'setVolume',
+                            'args': [1]
+                        }, '*');
+                        
+                        console.log('Sent unmute commands to Twitch player');
+                    } catch (e) {
+                        console.log('Could not send unmute commands:', e);
+                    }
+                }, 2000);
+            };
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
@@ -138,7 +158,41 @@ def clips():
             }, 30000);
         }
         
-        setTimeout(play, 1000);
+        // Global unmute attempt
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.event === 'video-ready') {
+                setTimeout(() => {
+                    event.source.postMessage({
+                        'event': 'command',
+                        'func': 'unMute',
+                        'args': []
+                    }, '*');
+                }, 1000);
+            }
+        });
+        
+        setTimeout(() => {
+            // Simulate user interaction for GoLightstream
+            const clickEvent = new MouseEvent('click', {
+                view: window,
+                bubbles: true,
+                cancelable: true
+            });
+            document.body.dispatchEvent(clickEvent);
+            
+            // Also try to unlock audio context
+            if (window.AudioContext || window.webkitAudioContext) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                const ctx = new AudioContext();
+                if (ctx.state === 'suspended') {
+                    ctx.resume().then(() => {
+                        console.log('Audio context resumed for GoLightstream');
+                    });
+                }
+            }
+            
+            play();
+        }, 1000);
         
         console.log('Loaded ' + clips.length + ' TickleFitz clips - trying player.twitch.tv');
     </script>
