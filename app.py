@@ -91,10 +91,7 @@ def clips():
 </head>
 <body>
     <div class="container">
-        <iframe id="player" 
-                allow="autoplay; fullscreen" 
-                allowfullscreen>
-        </iframe>
+        <iframe id="player"></iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of ''' + str(len(clip_ids)) + '''</div>
@@ -106,38 +103,12 @@ def clips():
         let i = 0;
         
         function play() {
+            const domain = window.location.hostname;
             const player = document.getElementById('player');
             
-            const parentDomain = window.location.hostname;
-            const playerUrl = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${parentDomain}&autoplay=true&muted=false`;
-            
-            player.src = playerUrl;
-            
-            console.log(`Playing clip: ${clips[i]} with parent: ${parentDomain}`);
-            
-            // Force unmute after iframe loads
-            player.onload = function() {
-                setTimeout(() => {
-                    try {
-                        // Try to post unmute message to Twitch iframe
-                        player.contentWindow.postMessage({
-                            'event': 'command',
-                            'func': 'unMute',
-                            'args': []
-                        }, '*');
-                        
-                        player.contentWindow.postMessage({
-                            'event': 'command', 
-                            'func': 'setVolume',
-                            'args': [1]
-                        }, '*');
-                        
-                        console.log('Sent unmute commands to Twitch player');
-                    } catch (e) {
-                        console.log('Could not send unmute commands:', e);
-                    }
-                }, 2000);
-            };
+            // Use direct Twitch clip URL instead of embed
+            const clipUrl = `https://clips.twitch.tv/${clips[i]}`;
+            player.src = clipUrl;
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
@@ -158,21 +129,9 @@ def clips():
             }, 30000);
         }
         
-        // Global unmute attempt
-        window.addEventListener('message', function(event) {
-            if (event.data && event.data.event === 'video-ready') {
-                setTimeout(() => {
-                    event.source.postMessage({
-                        'event': 'command',
-                        'func': 'unMute',
-                        'args': []
-                    }, '*');
-                }, 1000);
-            }
-        });
-        
-        setTimeout(() => {
-            // Simulate user interaction for GoLightstream
+        // Auto-click the page to enable audio context
+        document.addEventListener('DOMContentLoaded', () => {
+            // Simulate user interaction for audio
             const clickEvent = new MouseEvent('click', {
                 view: window,
                 bubbles: true,
@@ -180,21 +139,10 @@ def clips():
             });
             document.body.dispatchEvent(clickEvent);
             
-            // Also try to unlock audio context
-            if (window.AudioContext || window.webkitAudioContext) {
-                const AudioContext = window.AudioContext || window.webkitAudioContext;
-                const ctx = new AudioContext();
-                if (ctx.state === 'suspended') {
-                    ctx.resume().then(() => {
-                        console.log('Audio context resumed for GoLightstream');
-                    });
-                }
-            }
-            
-            play();
-        }, 1000);
+            setTimeout(play, 1000);
+        });
         
-        console.log('Loaded ' + clips.length + ' TickleFitz clips - trying player.twitch.tv');
+        console.log('Loaded ' + clips.length + ' TickleFitz clips dynamically');
     </script>
 </body>
 </html>'''
