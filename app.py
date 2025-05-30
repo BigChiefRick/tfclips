@@ -10,12 +10,9 @@ CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET')
 
 def get_ticklefitz_clips():
-    """Get real TickleFitz clips or return error"""
-    
     if not CLIENT_ID or not CLIENT_SECRET:
         raise Exception("Twitch API credentials not configured")
     
-    # Get access token
     token_response = requests.post('https://id.twitch.tv/oauth2/token', {
         'client_id': CLIENT_ID,
         'client_secret': CLIENT_SECRET,
@@ -32,7 +29,6 @@ def get_ticklefitz_clips():
         'Authorization': f'Bearer {token}'
     }
     
-    # Get TickleFitz user ID
     user_response = requests.get('https://api.twitch.tv/helix/users?login=ticklefitz', 
                                headers=headers, timeout=10)
     
@@ -45,7 +41,6 @@ def get_ticklefitz_clips():
     
     user_id = user_data['data'][0]['id']
     
-    # Get clips from last 30 days
     start_time = (datetime.now() - timedelta(days=30)).isoformat() + 'Z'
     
     clips_response = requests.get('https://api.twitch.tv/helix/clips', {
@@ -62,7 +57,6 @@ def get_ticklefitz_clips():
     if not clips_data:
         raise Exception("No TickleFitz clips found in the last 30 days")
     
-    # Sort by view count (most popular first)
     clips_data.sort(key=lambda x: x['view_count'], reverse=True)
     
     return [clip['id'] for clip in clips_data]
@@ -72,7 +66,6 @@ def clips():
     try:
         clip_ids = get_ticklefitz_clips()
     except Exception as e:
-        # Return error page if API fails
         return f'''<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8">
@@ -98,7 +91,7 @@ def clips():
 </head>
 <body>
     <div class="container">
-        <iframe id="player" allow="autoplay; fullscreen; microphone; camera; speaker-selection" allowfullscreen></iframe>
+        <iframe id="player"></iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of ''' + str(len(clip_ids)) + '''</div>
@@ -113,33 +106,41 @@ def clips():
             const domain = window.location.hostname;
             const player = document.getElementById('player');
             
-            // Force unmuted with multiple URL parameters
-            const embedUrl = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${domain}&autoplay=true&muted=false&volume=1`;
-            player.src = embedUrl;
+            // Use direct Twitch clip URL instead of embed
+            const clipUrl = `https://clips.twitch.tv/${clips[i]}`;
+            player.src = clipUrl;
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
             document.getElementById('progress').style.width = '0%';
             
-            // 30-second progress bar
             let progress = 0;
             const timer = setInterval(() => {
-                progress += 100 / 300; // 30 seconds
+                progress += 100 / 300;
                 document.getElementById('progress').style.width = Math.min(progress, 100) + '%';
                 if (progress >= 100) clearInterval(timer);
             }, 100);
             
             i = (i + 1) % clips.length;
             
-            // Next clip after exactly 30 seconds
             setTimeout(() => {
                 document.getElementById('progress').style.width = '0%';
                 setTimeout(play, 100);
             }, 30000);
         }
         
-        // Start playing immediately
-        setTimeout(play, 1000);
+        // Auto-click the page to enable audio context
+        document.addEventListener('DOMContentLoaded', () => {
+            // Simulate user interaction for audio
+            const clickEvent = new MouseEvent('click', {
+                view: window,
+                bubbles: true,
+                cancelable: true
+            });
+            document.body.dispatchEvent(clickEvent);
+            
+            setTimeout(play, 1000);
+        });
         
         console.log('Loaded ' + clips.length + ' TickleFitz clips dynamically');
     </script>
@@ -147,11 +148,6 @@ def clips():
 </html>'''
     
     return html
-
-@app.route('/refresh')
-def refresh():
-    """Force refresh clips"""
-    return clips()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
