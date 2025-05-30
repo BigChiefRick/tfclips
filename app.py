@@ -130,14 +130,26 @@ def clips():
                 console.log('Twitch embed ready');
                 player = embed.getPlayer();
                 
-                // Set up player event listeners
-                player.addEventListener(Twitch.Player.READY, onPlayerReady);
-                player.addEventListener(Twitch.Player.ENDED, onVideoEnd);
-                player.addEventListener(Twitch.Player.PLAY, onVideoPlay);
-                player.addEventListener(Twitch.Player.PAUSE, onVideoPause);
+                console.log('Player object:', player);
+                console.log('Player methods:', Object.getOwnPropertyNames(player));
                 
-                // Start playing first clip after player is ready
-                setTimeout(() => loadClip(currentIndex), 2000);
+                // Check if player has the methods we need
+                if (typeof player.setClip === 'function') {
+                    console.log('Player has setClip method');
+                    setTimeout(() => loadClip(currentIndex), 2000);
+                } else {
+                    console.log('Player does not have setClip method');
+                    console.log('Available methods:', Object.getOwnPropertyNames(player.__proto__));
+                }
+                
+                // Try different event listener methods
+                if (typeof player.addEventListener === 'function') {
+                    player.addEventListener(Twitch.Player.ENDED, onVideoEnd);
+                } else if (typeof player.on === 'function') {
+                    player.on('ended', onVideoEnd);
+                } else {
+                    console.log('No event listener method found on player');
+                }
             });
         }
         
