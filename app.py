@@ -63,36 +63,44 @@ def get_ticklefitz_clips_with_mp4():
     
     clips_with_mp4 = []
     for clip in clips_data:
-        # Extract MP4 URL from thumbnail URL - NEW TWITCH FORMAT
-        thumbnail_url = clip['thumbnail_url']
         print(f"DEBUG: Processing clip '{clip['title']}'")
-        print(f"DEBUG: Thumbnail URL: {thumbnail_url}")
+        print(f"DEBUG: Available fields: {list(clip.keys())}")
         
-        # New Twitch format: https://static-cdn.jtvnw.net/twitch-clips/CLIPID/VODID-offset-TIME-preview-480x272.jpg
-        # MP4 format should be: https://static-cdn.jtvnw.net/twitch-clips/CLIPID/VODID-offset-TIME.mp4
-        
-        mp4_url = None
-        
-        # Pattern for new Twitch CDN format
-        new_pattern = r'(https://static-cdn\.jtvnw\.net/twitch-clips/[^/]+/[^-]+-offset-\d+)-preview-\d+x\d+\.jpg'
-        mp4_match = re.search(new_pattern, thumbnail_url)
-        
-        if mp4_match:
-            mp4_url = mp4_match.group(1) + '.mp4'
-            print(f"DEBUG: Found MP4 URL: {mp4_url}")
-        else:
-            print(f"DEBUG: Could not extract MP4 URL from thumbnail")
-        
-        if mp4_url:
+        # Check if Twitch API provides direct video URL
+        video_url = clip.get('video_url')
+        if video_url:
+            print(f"DEBUG: Found video_url: {video_url}")
             clips_with_mp4.append({
                 'title': clip['title'],
-                'mp4_url': mp4_url,
+                'mp4_url': video_url,
                 'view_count': clip['view_count'],
                 'creator_name': clip['creator_name'],
                 'duration': clip['duration']
             })
+        else:
+            print(f"DEBUG: No video_url field found")
+            # Try the old thumbnail conversion method as fallback
+            thumbnail_url = clip['thumbnail_url']
+            print(f"DEBUG: Thumbnail URL: {thumbnail_url}")
+            
+            # Try the old conversion method
+            new_pattern = r'(https://static-cdn\.jtvnw\.net/twitch-clips/[^/]+/[^-]+-offset-\d+)-preview-\d+x\d+\.jpg'
+            mp4_match = re.search(new_pattern, thumbnail_url)
+            
+            if mp4_match:
+                mp4_url = mp4_match.group(1) + '.mp4'
+                print(f"DEBUG: Trying converted MP4 URL: {mp4_url}")
+                clips_with_mp4.append({
+                    'title': clip['title'],
+                    'mp4_url': mp4_url,
+                    'view_count': clip['view_count'],
+                    'creator_name': clip['creator_name'],
+                    'duration': clip['duration']
+                })
+            else:
+                print(f"DEBUG: Could not extract MP4 URL from thumbnail")
     
-    print(f"DEBUG: Found {len(clips_with_mp4)} clips with MP4 URLs out of {len(clips_data)} total clips")
+    print(f"DEBUG: Found {len(clips_with_mp4)} clips with video URLs out of {len(clips_data)} total clips")
     return clips_with_mp4
 
 @app.route('/')
@@ -162,6 +170,13 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
             
             const clip = clips[currentIndex];
             
+            console.log(`\n=== LOADING CLIP ${currentIndex + 1} ===`);
+            console.log(`Title: ${clip.title}`);
+            console.log(`MP4 URL: ${clip.mp4_url}`);
+            
+            // Test if the MP4 URL is accessible
+            testMP4Url(clip.mp4_url);
+            
             // Set video source
             player.src = clip.mp4_url;
             
@@ -171,17 +186,19 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
             const playPromise = player.play();
             if (playPromise !== undefined) {
                 playPromise.then(() => {
-                    console.log('Video playing successfully');
+                    console.log('✅ Video playing successfully');
                 }).catch(error => {
-                    console.log('Autoplay failed, trying muted:', error);
+                    console.log('❌ Autoplay failed:', error);
                     // If unmuted autoplay fails, try muted
                     player.muted = true;
                     player.play().then(() => {
-                        console.log('Video playing muted');
+                        console.log('🔇 Video playing muted');
                         // Try to unmute after a short delay
                         setTimeout(() => {
                             player.muted = false;
                         }, 1000);
+                    }).catch(err => {
+                        console.log('❌ Even muted playback failed:', err);
                     });
                 });
             }
@@ -192,8 +209,6 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
             
             // Reset progress
             document.getElementById('progress').style.width = '0%';
-            
-            console.log(`Loading clip: ${clip.title} from ${clip.mp4_url}`);
         }
         
         // Handle video end - move to next clip
@@ -218,11 +233,40 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
         
         // Video error handling
         player.addEventListener('error', (e) => {
-            console.log('Video error:', e);
+            console.log('Video error details:', {
+                error: e,
+                networkState: player.networkState,
+                readyState: player.readyState,
+                currentSrc: player.currentSrc
+            });
             console.log('Trying next clip...');
             currentIndex = (currentIndex + 1) % clips.length;
             setTimeout(playClip, 1000);
         });
+        
+        // More detailed video events for debugging
+        player.addEventListener('loadstart', () => console.log('Load started'));
+        player.addEventListener('loadedmetadata', () => console.log('Metadata loaded'));
+        player.addEventListener('canplay', () => console.log('Can start playing'));
+        player.addEventListener('canplaythrough', () => console.log('Can play through'));
+        player.addEventListener('stalled', () => console.log('Download stalled'));
+        player.addEventListener('suspend', () => console.log('Download suspended'));
+        player.addEventListener('abort', () => console.log('Download aborted'));
+        player.addEventListener('emptied', () => console.log('Media element emptied'));
+        
+        // Test MP4 URL accessibility
+        function testMP4Url(url) {
+            fetch(url, { method: 'HEAD' })
+                .then(response => {
+                    console.log(`MP4 URL test: ${response.status} ${response.statusText} for ${url}`);
+                    if (!response.ok) {
+                        console.log('MP4 URL not accessible - might need different format');
+                    }
+                })
+                .catch(error => {
+                    console.log('MP4 URL fetch error:', error);
+                });
+        }
         
         // Manual click to enable audio (fallback)
         document.addEventListener('click', () => {
