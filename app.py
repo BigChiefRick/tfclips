@@ -92,7 +92,7 @@ def clips():
 <body>
     <div class="container">
         <iframe id="player" 
-                allow="autoplay; fullscreen; microphone; camera; speaker-selection" 
+                allow="autoplay; fullscreen" 
                 allowfullscreen>
         </iframe>
         <div class="info">
@@ -109,11 +109,15 @@ def clips():
             const player = document.getElementById('player');
             
             // Use the exact Heroku app domain as parent
-            const parentDomain = window.location.hostname; // This gets tf-clips-987c7b7b6cb8.herokuapp.com
+            const parentDomain = window.location.hostname;
             
-            const playerUrl = `https://player.twitch.tv/?clip=${clips[i]}&parent=${parentDomain}&autoplay=true&muted=false`;
+            // Try different Twitch player URL formats
+            const playerUrl = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${parentDomain}&autoplay=true&muted=false`;
             
             player.src = playerUrl;
+            
+            console.log(`Playing clip: ${clips[i]} with parent: ${parentDomain}`);
+            console.log(`URL: ${playerUrl}`);
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
