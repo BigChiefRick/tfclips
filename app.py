@@ -120,7 +120,7 @@ def clips():
                 height: "100%",
                 autoplay: true,
                 muted: false,
-                parent: [parentDomain, "classic.golightstream.com"],
+                parent: ["tf-clips-987c7b7b6cb8.herokuapp.com", "classic.golightstream.com"],
                 layout: "video"
             });
             
