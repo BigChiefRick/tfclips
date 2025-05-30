@@ -3,14 +3,13 @@ import os
 import requests
 from datetime import datetime, timedelta
 import json
-import re
 
 app = Flask(__name__)
 
 CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET')
 
-def get_ticklefitz_clips_with_mp4():
+def get_ticklefitz_clips():
     if not CLIENT_ID or not CLIENT_SECRET:
         raise Exception("Twitch API credentials not configured")
     
@@ -58,68 +57,14 @@ def get_ticklefitz_clips_with_mp4():
     if not clips_data:
         raise Exception("No TickleFitz clips found in the last 30 days")
     
-    # Sort by view count and extract MP4 URLs
     clips_data.sort(key=lambda x: x['view_count'], reverse=True)
     
-    clips_with_mp4 = []
-    for clip in clips_data:
-        print(f"DEBUG: Processing clip '{clip['title']}'")
-        print(f"DEBUG: Available fields: {list(clip.keys())}")
-        
-        # Check if Twitch API provides direct video URL
-        video_url = clip.get('video_url')
-        if video_url:
-            print(f"DEBUG: Found video_url: {video_url}")
-            clips_with_mp4.append({
-                'title': clip['title'],
-                'mp4_url': video_url,
-                'view_count': clip['view_count'],
-                'creator_name': clip['creator_name'],
-                'duration': clip['duration']
-            })
-        else:
-            print(f"DEBUG: No video_url field found")
-            # Try the old thumbnail conversion method as fallback
-            thumbnail_url = clip['thumbnail_url']
-            print(f"DEBUG: Thumbnail URL: {thumbnail_url}")
-            
-            # Try the old conversion method
-            new_pattern = r'(https://static-cdn\.jtvnw\.net/twitch-clips/[^/]+/[^-]+-offset-\d+)-preview-\d+x\d+\.jpg'
-            mp4_match = re.search(new_pattern, thumbnail_url)
-            
-            if mp4_match:
-                mp4_url = mp4_match.group(1) + '.mp4'
-                print(f"DEBUG: Trying converted MP4 URL: {mp4_url}")
-                clips_with_mp4.append({
-                    'title': clip['title'],
-                    'mp4_url': mp4_url,
-                    'view_count': clip['view_count'],
-                    'creator_name': clip['creator_name'],
-                    'duration': clip['duration']
-                })
-            else:
-                print(f"DEBUG: Could not extract MP4 URL from thumbnail")
-    
-    print(f"DEBUG: Found {len(clips_with_mp4)} clips with video URLs out of {len(clips_data)} total clips")
-    return clips_with_mp4
+    return clips_data
 
 @app.route('/')
 def clips():
     try:
-        clips_data = get_ticklefitz_clips_with_mp4()
-        if not clips_data:
-            # If no MP4 URLs found, show debug info
-            return '''<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8">
-<style>body{margin:0;background:#000;color:#fff;font-family:Arial;padding:20px;}
-pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
-</style></head>
-<body>
-<h1>Debug: No MP4 URLs Found</h1>
-<p>Check Heroku logs for thumbnail URL patterns.</p>
-<p>The regex might need updating for current Twitch CDN format.</p>
-</body></html>'''
+        clips_data = get_ticklefitz_clips()
     except Exception as e:
         return f'''<!DOCTYPE html>
 <html>
@@ -139,14 +84,16 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: Arial; overflow: hidden; }
         .container { width: 100vw; height: 100vh; position: relative; }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        .info { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border-left: 4px solid #9146ff; }
-        .progress { position: absolute; bottom: 0; left: 0; height: 4px; background: #9146ff; transition: width 0.1s; }
+        #twitch-embed { width: 100%; height: 100%; }
+        .info { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border-left: 4px solid #9146ff; z-index: 100; }
+        .progress { position: absolute; bottom: 0; left: 0; height: 4px; background: #9146ff; transition: width 0.1s; z-index: 100; }
     </style>
+    <!-- Load Twitch Embed JavaScript API -->
+    <script src="https://embed.twitch.tv/embed/v1.js"></script>
 </head>
 <body>
     <div class="container">
-        <video id="player" autoplay></video>
+        <div id="twitch-embed"></div>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of ''' + str(len(clips_data)) + '''</div>
@@ -157,133 +104,115 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
     <script>
         const clips = ''' + clips_json + ''';
         let currentIndex = 0;
-        let progressTimer;
+        let embed = null;
+        let player = null;
+        let progressTimer = null;
         
-        const player = document.getElementById('player');
+        // Get the current hostname for parent parameter
+        const parentDomain = window.location.hostname;
+        console.log('Using parent domain:', parentDomain);
         
-        // Force unmute and autoplay
-        player.muted = false; // Start unmuted
-        player.volume = 1.0;
+        function initializeTwitchEmbed() {
+            console.log('Initializing Twitch Embed...');
+            
+            embed = new Twitch.Embed("twitch-embed", {
+                width: "100%",
+                height: "100%",
+                autoplay: true,
+                muted: false,
+                parent: [parentDomain, "classic.golightstream.com"],
+                layout: "video"
+            });
+            
+            // Wait for embed to be ready
+            embed.addEventListener(Twitch.Embed.VIDEO_READY, () => {
+                console.log('Twitch embed ready');
+                player = embed.getPlayer();
+                
+                // Set up player event listeners
+                player.addEventListener(Twitch.Player.READY, onPlayerReady);
+                player.addEventListener(Twitch.Player.ENDED, onVideoEnd);
+                player.addEventListener(Twitch.Player.PLAY, onVideoPlay);
+                player.addEventListener(Twitch.Player.PAUSE, onVideoPause);
+                
+                // Start playing first clip
+                loadClip(currentIndex);
+            });
+        }
         
-        function playClip() {
-            if (clips.length === 0) return;
+        function onPlayerReady() {
+            console.log('Player is ready');
+            // Try to unmute
+            player.setMuted(false);
+            player.setVolume(1.0);
+        }
+        
+        function onVideoEnd() {
+            console.log('Video ended, loading next clip...');
+            currentIndex = (currentIndex + 1) % clips.length;
+            setTimeout(() => loadClip(currentIndex), 1000);
+        }
+        
+        function onVideoPlay() {
+            console.log('Video started playing');
+            // Try to unmute when video starts
+            player.setMuted(false);
+        }
+        
+        function onVideoPause() {
+            console.log('Video paused');
+        }
+        
+        function loadClip(index) {
+            if (!player || clips.length === 0) return;
             
-            const clip = clips[currentIndex];
+            const clip = clips[index];
+            console.log(`Loading clip ${index + 1}: ${clip.title}`);
             
-            console.log(`\n=== LOADING CLIP ${currentIndex + 1} ===`);
-            console.log(`Title: ${clip.title}`);
-            console.log(`MP4 URL: ${clip.mp4_url}`);
-            
-            // Test if the MP4 URL is accessible
-            testMP4Url(clip.mp4_url);
-            
-            // Set video source
-            player.src = clip.mp4_url;
-            
-            // Force play
-            player.load(); // Reload the video element
-            
-            const playPromise = player.play();
-            if (playPromise !== undefined) {
-                playPromise.then(() => {
-                    console.log('✅ Video playing successfully');
-                }).catch(error => {
-                    console.log('❌ Autoplay failed:', error);
-                    // If unmuted autoplay fails, try muted
-                    player.muted = true;
-                    player.play().then(() => {
-                        console.log('🔇 Video playing muted');
-                        // Try to unmute after a short delay
-                        setTimeout(() => {
-                            player.muted = false;
-                        }, 1000);
-                    }).catch(err => {
-                        console.log('❌ Even muted playback failed:', err);
-                    });
-                });
-            }
-            
+            // Update UI
             document.getElementById('title').textContent = clip.title;
-            document.getElementById('num').textContent = currentIndex + 1;
+            document.getElementById('num').textContent = index + 1;
             document.getElementById('details').textContent = `👁️ ${clip.view_count.toLocaleString()} views • 👤 ${clip.creator_name}`;
             
-            // Reset progress
+            // Reset progress bar
             document.getElementById('progress').style.width = '0%';
+            
+            // Load the clip in the player
+            player.setClip(clip.id);
+            
+            // Start progress simulation (since we can't get exact duration easily)
+            startProgressBar(clip.duration);
         }
         
-        // Handle video end - move to next clip
-        player.addEventListener('ended', () => {
-            console.log('Video ended, moving to next clip');
-            currentIndex = (currentIndex + 1) % clips.length;
-            setTimeout(playClip, 500); // Small delay between clips
-        });
-        
-        // Progress bar based on video duration
-        player.addEventListener('timeupdate', () => {
-            if (player.duration > 0) {
-                const progress = (player.currentTime / player.duration) * 100;
-                document.getElementById('progress').style.width = progress + '%';
-            }
-        });
-        
-        // Video loaded successfully
-        player.addEventListener('loadeddata', () => {
-            console.log('Video data loaded');
-        });
-        
-        // Video error handling
-        player.addEventListener('error', (e) => {
-            console.log('Video error details:', {
-                error: e,
-                networkState: player.networkState,
-                readyState: player.readyState,
-                currentSrc: player.currentSrc
-            });
-            console.log('Trying next clip...');
-            currentIndex = (currentIndex + 1) % clips.length;
-            setTimeout(playClip, 1000);
-        });
-        
-        // More detailed video events for debugging
-        player.addEventListener('loadstart', () => console.log('Load started'));
-        player.addEventListener('loadedmetadata', () => console.log('Metadata loaded'));
-        player.addEventListener('canplay', () => console.log('Can start playing'));
-        player.addEventListener('canplaythrough', () => console.log('Can play through'));
-        player.addEventListener('stalled', () => console.log('Download stalled'));
-        player.addEventListener('suspend', () => console.log('Download suspended'));
-        player.addEventListener('abort', () => console.log('Download aborted'));
-        player.addEventListener('emptied', () => console.log('Media element emptied'));
-        
-        // Test MP4 URL accessibility
-        function testMP4Url(url) {
-            fetch(url, { method: 'HEAD' })
-                .then(response => {
-                    console.log(`MP4 URL test: ${response.status} ${response.statusText} for ${url}`);
-                    if (!response.ok) {
-                        console.log('MP4 URL not accessible - might need different format');
-                    }
-                })
-                .catch(error => {
-                    console.log('MP4 URL fetch error:', error);
-                });
+        function startProgressBar(duration) {
+            if (progressTimer) clearInterval(progressTimer);
+            
+            let progress = 0;
+            const increment = 100 / (duration * 10); // Update every 100ms
+            
+            progressTimer = setInterval(() => {
+                progress += increment;
+                document.getElementById('progress').style.width = Math.min(progress, 100) + '%';
+                
+                if (progress >= 100) {
+                    clearInterval(progressTimer);
+                }
+            }, 100);
         }
         
-        // Manual click to enable audio (fallback)
+        // Manual click to enable audio
         document.addEventListener('click', () => {
-            player.muted = false;
-            if (player.paused) {
-                player.play();
+            if (player) {
+                player.setMuted(false);
+                console.log('Manual unmute attempt');
             }
-            console.log('Manual interaction - audio enabled');
         });
         
-        // Start playing immediately
-        setTimeout(() => {
-            console.log('Starting first clip...');
-            playClip();
-        }, 1000);
-        
-        console.log(`Loaded ${clips.length} TickleFitz clips with direct MP4 URLs`);
+        // Initialize when page loads
+        window.addEventListener('load', () => {
+            console.log(`Loaded ${clips.length} TickleFitz clips`);
+            setTimeout(initializeTwitchEmbed, 1000);
+        });
     </script>
 </body>
 </html>'''
