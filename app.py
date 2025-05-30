@@ -145,25 +145,33 @@ def clips():
         
         function play() {{
             const domain = window.location.hostname;
-            document.getElementById('player').src = `https://clips.twitch.tv/embed?clip=${{clips[i]}}&parent=${{domain}}&autoplay=true&muted=false`;
+            const player = document.getElementById('player');
+            
+            player.src = `https://clips.twitch.tv/embed?clip=${{clips[i]}}&parent=${{domain}}&autoplay=true&muted=false`;
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${{i + 1}}`;
             
-            // Progress bar for 45 seconds
+            // Reset progress bar
+            document.getElementById('progress').style.width = '0%';
+            
+            // Progress bar animation (estimated clip length)
             let progress = 0;
             if (progressInterval) clearInterval(progressInterval);
             progressInterval = setInterval(() => {{
-                progress += 100 / 450; // 45 seconds = 450 intervals of 100ms
-                document.getElementById('progress').style.width = Math.min(progress, 100) + '%';
-                if (progress >= 100) clearInterval(progressInterval);
+                progress += 0.4; // Adjust speed as needed
+                document.getElementById('progress').style.width = Math.min(progress, 95) + '%';
             }}, 100);
             
             i = (i + 1) % clips.length;
-            // No wait time - immediate transition after 45 seconds
+            
+            // Auto-advance after estimated clip time (most clips are 15-45 seconds)
             setTimeout(() => {{
-                document.getElementById('progress').style.width = '0%';
-                play(); // Immediate next clip
-            }}, 45000);
+                if (progressInterval) clearInterval(progressInterval);
+                document.getElementById('progress').style.width = '100%';
+                
+                // Immediate transition to next clip
+                setTimeout(play, 200);
+            }}, 30000); // 30 seconds - adjust this if clips are typically longer/shorter
         }}
         
         setTimeout(play, 1000);
