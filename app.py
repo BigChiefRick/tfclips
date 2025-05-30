@@ -64,10 +64,12 @@ def player():
         .container {{ width: 100vw; height: 100vh; position: relative; }}
         iframe {{ width: 100%; height: 100%; border: none; }}
         .info {{ position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; }}
+        .unmute-btn {{ position: absolute; top: -1000px; left: -1000px; opacity: 0; }}
     </style>
 </head>
 <body>
     <div class="container">
+        <button id="unmuteBtn" class="unmute-btn">Unmute</button>
         <iframe id="player"></iframe>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
@@ -77,6 +79,16 @@ def player():
     <script>
         const clips = {clips_json};
         let index = 0;
+        let audioUnlocked = false;
+        
+        function unlockAudio() {{
+            if (!audioUnlocked) {{
+                console.log('Auto-clicking to unlock audio...');
+                document.getElementById('unmuteBtn').click();
+                audioUnlocked = true;
+                console.log('Audio unlocked for all clips');
+            }}
+        }}
         
         function playClip() {{
             if (clips.length === 0) return;
@@ -94,7 +106,11 @@ def player():
             setTimeout(playClip, clip.duration * 1000 + 2000);
         }}
         
-        setTimeout(playClip, 1000);
+        // Auto-unlock audio then start playing
+        setTimeout(() => {{
+            unlockAudio();
+            setTimeout(playClip, 500);
+        }}, 1000);
     </script>
 </body>
 </html>
