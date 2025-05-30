@@ -3,19 +3,17 @@ import os
 import requests
 from datetime import datetime, timedelta
 import json
+import re
 
 app = Flask(__name__)
 
 CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET')
 
-def get_ticklefitz_clips():
-    """Get real TickleFitz clips or return error"""
-    
+def get_ticklefitz_clips_with_mp4():
     if not CLIENT_ID or not CLIENT_SECRET:
         raise Exception("Twitch API credentials not configured")
     
-    # Get access token
     token_response = requests.post('https://id.twitch.tv/oauth2/token', {
         'client_id': CLIENT_ID,
         'client_secret': CLIENT_SECRET,
@@ -32,7 +30,6 @@ def get_ticklefitz_clips():
         'Authorization': f'Bearer {token}'
     }
     
-    # Get TickleFitz user ID
     user_response = requests.get('https://api.twitch.tv/helix/users?login=ticklefitz', 
                                headers=headers, timeout=10)
     
@@ -45,7 +42,6 @@ def get_ticklefitz_clips():
     
     user_id = user_data['data'][0]['id']
     
-    # Get clips from last 30 days
     start_time = (datetime.now() - timedelta(days=30)).isoformat() + 'Z'
     
     clips_response = requests.get('https://api.twitch.tv/helix/clips', {
@@ -62,17 +58,32 @@ def get_ticklefitz_clips():
     if not clips_data:
         raise Exception("No TickleFitz clips found in the last 30 days")
     
-    # Sort by view count (most popular first)
+    # Sort by view count and extract MP4 URLs
     clips_data.sort(key=lambda x: x['view_count'], reverse=True)
     
-    return [clip['id'] for clip in clips_data]
+    clips_with_mp4 = []
+    for clip in clips_data:
+        # Extract MP4 URL from thumbnail URL (same as the genius method above)
+        thumbnail_url = clip['thumbnail_url']
+        mp4_match = re.search(r'(https://clips-media-assets2\.twitch\.tv/.*)-preview', thumbnail_url)
+        
+        if mp4_match:
+            mp4_url = mp4_match.group(1) + '.mp4'
+            clips_with_mp4.append({
+                'title': clip['title'],
+                'mp4_url': mp4_url,
+                'view_count': clip['view_count'],
+                'creator_name': clip['creator_name'],
+                'duration': clip['duration']
+            })
+    
+    return clips_with_mp4
 
 @app.route('/')
 def clips():
     try:
-        clip_ids = get_ticklefitz_clips()
+        clips_data = get_ticklefitz_clips_with_mp4()
     except Exception as e:
-        # Return error page if API fails
         return f'''<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8">
@@ -82,7 +93,7 @@ def clips():
 <body><div class="error"><h1>Error Loading TickleFitz Clips</h1><p>{str(e)}</p>
 <p>Check Twitch API credentials in Heroku config vars.</p></div></body></html>'''
     
-    clips_json = json.dumps(clip_ids)
+    clips_json = json.dumps(clips_data)
     
     html = '''<!DOCTYPE html>
 <html>
@@ -91,67 +102,78 @@ def clips():
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: Arial; overflow: hidden; }
         .container { width: 100vw; height: 100vh; position: relative; }
-        iframe { width: 100%; height: 100%; border: none; }
+        video { width: 100%; height: 100%; object-fit: cover; }
         .info { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border-left: 4px solid #9146ff; }
         .progress { position: absolute; bottom: 0; left: 0; height: 4px; background: #9146ff; transition: width 0.1s; }
     </style>
 </head>
 <body>
     <div class="container">
-        <iframe id="player" allow="autoplay; fullscreen; microphone; camera; speaker-selection" allowfullscreen></iframe>
+        <video id="player" autoplay muted></video>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
-            <div>Clip <span id="num">1</span> of ''' + str(len(clip_ids)) + '''</div>
+            <div>Clip <span id="num">1</span> of ''' + str(len(clips_data)) + '''</div>
+            <div id="details" style="font-size: 12px; color: #ccc; margin-top: 5px;"></div>
         </div>
         <div id="progress" class="progress" style="width: 0%;"></div>
     </div>
     <script>
         const clips = ''' + clips_json + ''';
-        let i = 0;
+        let currentIndex = 0;
+        let progressTimer;
         
-        function play() {
-            const domain = window.location.hostname;
-            const player = document.getElementById('player');
+        const player = document.getElementById('player');
+        
+        // Unmute after user interaction (required for autoplay)
+        document.addEventListener('click', () => {
+            player.muted = false;
+            console.log('Audio enabled');
+        });
+        
+        // Auto-unmute attempt
+        setTimeout(() => {
+            player.muted = false;
+        }, 2000);
+        
+        function playClip() {
+            if (clips.length === 0) return;
             
-            // Force unmuted with multiple URL parameters
-            const embedUrl = `https://clips.twitch.tv/embed?clip=${clips[i]}&parent=${domain}&autoplay=true&muted=false&volume=1`;
-            player.src = embedUrl;
+            const clip = clips[currentIndex];
+            player.src = clip.mp4_url;
             
-            document.getElementById('num').textContent = i + 1;
-            document.getElementById('title').textContent = `TickleFitz Clip ${i + 1}`;
+            document.getElementById('title').textContent = clip.title;
+            document.getElementById('num').textContent = currentIndex + 1;
+            document.getElementById('details').textContent = `👁️ ${clip.view_count.toLocaleString()} views • 👤 ${clip.creator_name}`;
+            
+            // Reset progress
             document.getElementById('progress').style.width = '0%';
             
-            // 30-second progress bar
-            let progress = 0;
-            const timer = setInterval(() => {
-                progress += 100 / 300; // 30 seconds
-                document.getElementById('progress').style.width = Math.min(progress, 100) + '%';
-                if (progress >= 100) clearInterval(timer);
-            }, 100);
-            
-            i = (i + 1) % clips.length;
-            
-            // Next clip after exactly 30 seconds
-            setTimeout(() => {
-                document.getElementById('progress').style.width = '0%';
-                setTimeout(play, 100);
-            }, 30000);
+            console.log(`Playing: ${clip.title} (${clip.view_count} views)`);
         }
         
-        // Start playing immediately
-        setTimeout(play, 1000);
+        // Handle video end - move to next clip
+        player.addEventListener('ended', () => {
+            currentIndex = (currentIndex + 1) % clips.length;
+            setTimeout(playClip, 500); // Small delay between clips
+        });
         
-        console.log('Loaded ' + clips.length + ' TickleFitz clips dynamically');
+        // Progress bar based on video duration
+        player.addEventListener('timeupdate', () => {
+            if (player.duration > 0) {
+                const progress = (player.currentTime / player.duration) * 100;
+                document.getElementById('progress').style.width = progress + '%';
+            }
+        });
+        
+        // Start playing
+        setTimeout(playClip, 1000);
+        
+        console.log(`Loaded ${clips.length} TickleFitz clips with direct MP4 URLs`);
     </script>
 </body>
 </html>'''
     
     return html
-
-@app.route('/refresh')
-def refresh():
-    """Force refresh clips"""
-    return clips()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
