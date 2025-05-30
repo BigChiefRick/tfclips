@@ -138,7 +138,7 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
 </head>
 <body>
     <div class="container">
-        <video id="player" autoplay muted></video>
+        <video id="player" autoplay></video>
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of ''' + str(len(clips_data)) + '''</div>
@@ -153,22 +153,38 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
         
         const player = document.getElementById('player');
         
-        // Unmute after user interaction (required for autoplay)
-        document.addEventListener('click', () => {
-            player.muted = false;
-            console.log('Audio enabled');
-        });
-        
-        // Auto-unmute attempt
-        setTimeout(() => {
-            player.muted = false;
-        }, 2000);
+        // Force unmute and autoplay
+        player.muted = false; // Start unmuted
+        player.volume = 1.0;
         
         function playClip() {
             if (clips.length === 0) return;
             
             const clip = clips[currentIndex];
+            
+            // Set video source
             player.src = clip.mp4_url;
+            
+            // Force play
+            player.load(); // Reload the video element
+            
+            const playPromise = player.play();
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    console.log('Video playing successfully');
+                }).catch(error => {
+                    console.log('Autoplay failed, trying muted:', error);
+                    // If unmuted autoplay fails, try muted
+                    player.muted = true;
+                    player.play().then(() => {
+                        console.log('Video playing muted');
+                        // Try to unmute after a short delay
+                        setTimeout(() => {
+                            player.muted = false;
+                        }, 1000);
+                    });
+                });
+            }
             
             document.getElementById('title').textContent = clip.title;
             document.getElementById('num').textContent = currentIndex + 1;
@@ -177,11 +193,12 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
             // Reset progress
             document.getElementById('progress').style.width = '0%';
             
-            console.log(`Playing: ${clip.title} (${clip.view_count} views)`);
+            console.log(`Loading clip: ${clip.title} from ${clip.mp4_url}`);
         }
         
         // Handle video end - move to next clip
         player.addEventListener('ended', () => {
+            console.log('Video ended, moving to next clip');
             currentIndex = (currentIndex + 1) % clips.length;
             setTimeout(playClip, 500); // Small delay between clips
         });
@@ -194,8 +211,33 @@ pre{background:#333;padding:15px;border-radius:5px;overflow:auto;}
             }
         });
         
-        // Start playing
-        setTimeout(playClip, 1000);
+        // Video loaded successfully
+        player.addEventListener('loadeddata', () => {
+            console.log('Video data loaded');
+        });
+        
+        // Video error handling
+        player.addEventListener('error', (e) => {
+            console.log('Video error:', e);
+            console.log('Trying next clip...');
+            currentIndex = (currentIndex + 1) % clips.length;
+            setTimeout(playClip, 1000);
+        });
+        
+        // Manual click to enable audio (fallback)
+        document.addEventListener('click', () => {
+            player.muted = false;
+            if (player.paused) {
+                player.play();
+            }
+            console.log('Manual interaction - audio enabled');
+        });
+        
+        // Start playing immediately
+        setTimeout(() => {
+            console.log('Starting first clip...');
+            playClip();
+        }, 1000);
         
         console.log(`Loaded ${clips.length} TickleFitz clips with direct MP4 URLs`);
     </script>
