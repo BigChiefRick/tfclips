@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ broadcaster_name }} - Stream Clips</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        
+        .stream-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        
+        .clip-player {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        
+        .clip-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            padding: 15px 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            max-width: 400px;
+        }
+        
+        .clip-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+            line-height: 1.3;
+        }
+        
+        .clip-info {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .clip-creator {
+            color: #9146ff;
+        }
+        
+        .clip-views {
+            color: #ffaa00;
+        }
+        
+        .progress-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: rgba(255,255,255,0.2);
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #9146ff, #7c3aed);
+            width: 0%;
+            transition: width 1s linear;
+        }
+        
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top: 4px solid #9146ff;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            text-align: center;
+            padding: 40px;
+            color: #ff6b6b;
+        }
+        
+        .no-clips {
+            text-align: center;
+            padding: 40px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="stream-container">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <div>Loading clips for streaming...</div>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="clip-container" style="width: 100%; height: 100%; display: none;">
+            <iframe id="current-clip" class="clip-player" allowfullscreen></iframe>
+            
+            <div class="clip-overlay">
+                <div class="clip-title" id="clip-title">Loading...</div>
+                <div class="clip-info">
+                    <span class="clip-creator" id="clip-creator"></span>
+                    <span class="clip-views" id="clip-views"></span>
+                </div>
+            </div>
+            
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let clips = [];
+        let currentClipIndex = 0;
+        let progressInterval;
+        let nextClipTimeout;
+        const interval = {{ interval }} * 1000; // Convert to milliseconds
+        
+        async function loadClips() {
+            try {
+                const response = await fetch(`/api/clips?count={{ count }}&period={{ period }}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                clips = data.clips;
+                
+                if (clips.length === 0) {
+                    showNoClips();
+                    return;
+                }
+                
+                startClipRotation();
+                
+            } catch (error) {
+                console.error('Error loading clips:', error);
+                document.getElementById('error').innerHTML = `
+                    <h3>Error loading clips</h3>
+                    <p>${error.message}</p>
+                `;
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+        
+        function showNoClips() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('clip-container').innerHTML = `
+                <div class="no-clips">
+                    <h2>No clips available</h2>
+                    <p>Check back later for new clips!</p>
+                </div>
+            `;
+            document.getElementById('clip-container').style.display = 'flex';
+            document.getElementById('clip-container').style.alignItems = 'center';
+            document.getElementById('clip-container').style.justifyContent = 'center';
+        }
+        
+        function startClipRotation() {
+            if (clips.length === 0) return;
+            
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('clip-container').style.display = 'block';
+            
+            showClip(0);
+            
+            // Auto-rotate clips
+            function rotateToNext() {
+                currentClipIndex = (currentClipIndex + 1) % clips.length;
+                showClip(currentClipIndex);
+                
+                // Schedule next rotation
+                nextClipTimeout = setTimeout(rotateToNext, interval);
+            }
+            
+            // Start rotation after first clip duration
+            nextClipTimeout = setTimeout(rotateToNext, interval);
+        }
+        
+        function showClip(index) {
+            if (!clips[index]) return;
+            
+            const clip = clips[index];
+            
+            // Update iframe src with autoplay enabled for seamless transition
+            const embedUrl = `https://clips.twitch.tv/embed?clip=${clip.id}&parent=herokuapp.com&autoplay=true&muted=false`;
+            document.getElementById('current-clip').src = embedUrl;
+            
+            // Update overlay info
+            document.getElementById('clip-title').textContent = clip.title;
+            document.getElementById('clip-creator').textContent = `👤 ${clip.creator_name}`;
+            document.getElementById('clip-views').textContent = `👀 ${clip.view_count.toLocaleString()}`;
+            
+            // Start progress bar animation
+            startProgressBar();
+        }
+        
+        function startProgressBar() {
+            // Reset progress bar
+            const progressFill = document.getElementById('progress-fill');
+            progressFill.style.width = '0%';
+            
+            // Clear existing interval
+            if (progressInterval) {
+                clearInterval(progressInterval);
+            }
+            
+            // Animate progress bar
+            let progress = 0;
+            const stepTime = 100; // Update every 100ms
+            const totalSteps = interval / stepTime;
+            const stepSize = 100 / totalSteps;
+            
+            progressInterval = setInterval(() => {
+                progress += stepSize;
+                if (progress >= 100) {
+                    progress = 100;
+                    clearInterval(progressInterval);
+                }
+                progressFill.style.width = progress + '%';
+            }, stepTime);
+        }
+        
+        // Handle page visibility to pause/resume when tab is not active
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                // Resume rotation if paused
+                if (!nextClipTimeout && clips.length > 0) {
+                    startClipRotation();
+                }
+            } else {
+                // Pause rotation when tab is not visible
+                if (nextClipTimeout) {
+                    clearTimeout(nextClipTimeout);
+                    nextClipTimeout = null;
+                }
+                if (progressInterval) {
+                    clearInterval(progressInterval);
+                }
+            }
+        });
+        
+        // Load clips on page load
+        document.addEventListener('DOMContentLoaded', loadClips);
+        
+        // Refresh clips every 10 minutes to get new content
+        setInterval(loadClips, 10 * 60 * 1000);
+    </script>
+</body>
+</html>
