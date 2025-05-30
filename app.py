@@ -87,28 +87,50 @@ class ClipManager:
     def update_github_repo(self):
         """Download clips and update GitHub repo"""
         if not GITHUB_TOKEN or not GITHUB_REPO:
+            print("ERROR: Missing GITHUB_TOKEN or GITHUB_REPO environment variables")
             return False
+            
+        print(f"Starting GitHub update for repo: {GITHUB_REPO}")
+        print(f"Number of clips to process: {len(self.clips_data)}")
             
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
+                print(f"Created temp directory: {temp_dir}")
+                
                 # Clone repo
                 repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-                subprocess.run(['git', 'clone', repo_url, temp_dir], check=True, capture_output=True)
+                print("Attempting to clone repository...")
+                
+                result = subprocess.run(['git', 'clone', repo_url, temp_dir], 
+                                      check=True, capture_output=True, text=True)
+                print(f"Git clone successful: {result.stdout}")
                 
                 os.chdir(temp_dir)
+                print(f"Changed to directory: {os.getcwd()}")
                 
                 # Create clips directory
                 clips_dir = 'clips'
                 os.makedirs(clips_dir, exist_ok=True)
+                print(f"Created clips directory: {clips_dir}")
                 
                 successful_clips = []
                 
                 # Download each clip
                 for i, clip in enumerate(self.clips_data):
+                    print(f"Processing clip {i+1}: {clip['title']}")
+                    print(f"Thumbnail URL: {clip['thumbnail_url']}")
+                    
                     mp4_url = self.extract_mp4_url(clip['thumbnail_url'])
+                    print(f"Extracted MP4 URL: {mp4_url}")
+                    
                     if mp4_url:
                         filename = f"{clips_dir}/clip_{i+1}_{clip['id']}.mp4"
+                        print(f"Attempting to download to: {filename}")
+                        
                         if self.download_clip(clip['id'], mp4_url, filename):
+                            file_size = os.path.getsize(filename)
+                            print(f"Successfully downloaded: {filename} ({file_size} bytes)")
+                            
                             successful_clips.append({
                                 'id': clip['id'],
                                 'title': clip['title'],
@@ -117,23 +139,49 @@ class ClipManager:
                                 'duration': clip['duration'],
                                 'creator_name': clip['creator_name']
                             })
-                            print(f"Downloaded: {clip['title']}")
+                        else:
+                            print(f"Failed to download: {filename}")
+                    else:
+                        print(f"Could not extract MP4 URL from thumbnail")
+                
+                print(f"Successfully downloaded {len(successful_clips)} clips")
                 
                 # Create clips manifest
-                with open('clips/manifest.json', 'w') as f:
+                manifest_file = 'clips/manifest.json'
+                with open(manifest_file, 'w') as f:
                     json.dump(successful_clips, f, indent=2)
+                print(f"Created manifest file: {manifest_file}")
                 
-                # Commit and push
-                subprocess.run(['git', 'add', '.'], check=True)
+                # Git operations
+                print("Adding files to git...")
+                subprocess.run(['git', 'add', '.'], check=True, capture_output=True)
+                
+                print("Setting git config...")
                 subprocess.run(['git', 'config', 'user.email', 'action@github.com'], check=True)
                 subprocess.run(['git', 'config', 'user.name', 'Clips Bot'], check=True)
-                subprocess.run(['git', 'commit', '-m', f'Update clips - {datetime.now().strftime("%Y-%m-%d %H:%M")}'], check=True)
-                subprocess.run(['git', 'push'], check=True)
                 
+                print("Committing changes...")
+                commit_result = subprocess.run(['git', 'commit', '-m', f'Update clips - {datetime.now().strftime("%Y-%m-%d %H:%M")}'], 
+                                             check=True, capture_output=True, text=True)
+                print(f"Commit result: {commit_result.stdout}")
+                
+                print("Pushing to GitHub...")
+                push_result = subprocess.run(['git', 'push'], check=True, capture_output=True, text=True)
+                print(f"Push result: {push_result.stdout}")
+                
+                print("GitHub update completed successfully!")
                 return len(successful_clips)
                 
+        except subprocess.CalledProcessError as e:
+            print(f"Git command failed: {e}")
+            print(f"Return code: {e.returncode}")
+            print(f"Stdout: {e.stdout}")
+            print(f"Stderr: {e.stderr}")
+            return False
         except Exception as e:
             print(f"GitHub update error: {e}")
+            import traceback
+            print(f"Full traceback: {traceback.format_exc()}")
             return False
 
 clip_manager = ClipManager()
@@ -144,7 +192,7 @@ def player():
     
     # Try to get clips manifest from GitHub
     try:
-        manifest_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/clips/manifest.json"
+        manifest_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/clips/manifest.json"
         response = requests.get(manifest_url)
         if response.status_code == 200:
             clips = response.json()
@@ -164,7 +212,7 @@ def player():
         '''
     
     clips_json = json.dumps(clips)
-    base_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/"
+    base_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/"
     
     html = f'''
 <!DOCTYPE html>
@@ -255,29 +303,40 @@ def player():
 def update_clips():
     """Manually trigger clips update"""
     
+    print("=== STARTING CLIPS UPDATE ===")
+    
     if not CLIENT_ID or not CLIENT_SECRET:
-        return "Missing Twitch API credentials"
+        print("ERROR: Missing Twitch API credentials")
+        return "❌ Missing Twitch API credentials (TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)"
     
     if not GITHUB_TOKEN or not GITHUB_REPO:
-        return "Missing GitHub configuration"
+        print("ERROR: Missing GitHub configuration")
+        return f"❌ Missing GitHub configuration. GITHUB_TOKEN: {'SET' if GITHUB_TOKEN else 'MISSING'}, GITHUB_REPO: {GITHUB_REPO or 'MISSING'}"
+    
+    print(f"Using GitHub repo: {GITHUB_REPO}")
     
     print("Fetching TickleFitz clips...")
     if not clip_manager.get_twitch_clips():
-        return "Failed to fetch clips from Twitch"
+        print("ERROR: Failed to fetch clips from Twitch")
+        return "❌ Failed to fetch clips from Twitch API"
+    
+    print(f"Successfully fetched {len(clip_manager.clips_data)} clips")
     
     print("Updating GitHub repo...")
     result = clip_manager.update_github_repo()
     
     if result:
+        print(f"SUCCESS: Updated {result} clips")
         return f"✅ Successfully updated {result} clips! <a href='/'>View Player</a>"
     else:
-        return "❌ Failed to update GitHub repo"
+        print("ERROR: Failed to update GitHub repo")
+        return "❌ Failed to update GitHub repo. Check Heroku logs for details."
 
 @app.route('/status')
 def status():
     """Show current status"""
     try:
-        manifest_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/clips/manifest.json"
+        manifest_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/clips/manifest.json"
         response = requests.get(manifest_url)
         if response.status_code == 200:
             clips = response.json()
