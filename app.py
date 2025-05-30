@@ -84,7 +84,36 @@ def player():
         function unlockAudio() {{
             if (!audioUnlocked) {{
                 console.log('Auto-clicking to unlock audio...');
+                
+                // Multiple unlock attempts
                 document.getElementById('unmuteBtn').click();
+                
+                // Create and dispatch multiple click events
+                const clickEvent = new MouseEvent('click', {{
+                    view: window,
+                    bubbles: true,
+                    cancelable: true
+                }});
+                document.body.dispatchEvent(clickEvent);
+                
+                // Touch event for mobile
+                const touchEvent = new TouchEvent('touchstart', {{
+                    bubbles: true,
+                    cancelable: true
+                }});
+                document.body.dispatchEvent(touchEvent);
+                
+                // Try to unlock AudioContext
+                if (window.AudioContext || window.webkitAudioContext) {{
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    const ctx = new AudioContext();
+                    if (ctx.state === 'suspended') {{
+                        ctx.resume().then(() => {{
+                            console.log('AudioContext resumed');
+                        }});
+                    }}
+                }}
+                
                 audioUnlocked = true;
                 console.log('Audio unlocked for all clips');
             }}
@@ -94,9 +123,26 @@ def player():
             if (clips.length === 0) return;
             
             const clip = clips[index];
-            const embedUrl = `https://clips.twitch.tv/embed?clip=${{clip.id}}&parent=tf-clips-987c7b7b6cb8.herokuapp.com&parent=classic.golightstream.com&autoplay=true&muted=false`;
+            const embedUrl = `https://clips.twitch.tv/embed?clip=${{clip.id}}&parent=tf-clips-987c7b7b6cb8.herokuapp.com&parent=classic.golightstream.com&autoplay=true&muted=false&volume=1`;
             
-            document.getElementById('player').src = embedUrl;
+            const player = document.getElementById('player');
+            player.src = embedUrl;
+            
+            // Try to send unmute message to iframe after it loads
+            player.onload = function() {{
+                setTimeout(() => {{
+                    try {{
+                        // Try multiple unmute methods
+                        player.contentWindow.postMessage('{{"event":"command","func":"unMute","args":[]}}', '*');
+                        player.contentWindow.postMessage('{{"event":"command","func":"setVolume","args":[1]}}', '*');
+                        player.contentWindow.postMessage('unmute', '*');
+                        console.log('Sent unmute commands to iframe');
+                    }} catch (e) {{
+                        console.log('Could not send unmute commands:', e);
+                    }}
+                }}, 2000);
+            }};
+            
             document.getElementById('title').textContent = clip.title;
             document.getElementById('num').textContent = index + 1;
             
