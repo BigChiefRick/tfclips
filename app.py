@@ -118,7 +118,8 @@ def clips():
             embed = new Twitch.Embed("twitch-embed", {
                 width: "100%",
                 height: "100%",
-                autoplay: true,
+                channel: "ticklefitz", // Initialize with channel first
+                autoplay: false,
                 muted: false,
                 parent: ["tf-clips-987c7b7b6cb8.herokuapp.com", "classic.golightstream.com"],
                 layout: "video"
@@ -135,8 +136,8 @@ def clips():
                 player.addEventListener(Twitch.Player.PLAY, onVideoPlay);
                 player.addEventListener(Twitch.Player.PAUSE, onVideoPause);
                 
-                // Start playing first clip
-                loadClip(currentIndex);
+                // Start playing first clip after player is ready
+                setTimeout(() => loadClip(currentIndex), 2000);
             });
         }
         
