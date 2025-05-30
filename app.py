@@ -127,11 +127,30 @@ def clips():
             position: absolute; bottom: 0; left: 0; height: 4px; 
             background: #9146ff; transition: width 0.1s; 
         }}
+        .unmute-overlay {{
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: flex; align-items: center; 
+            justify-content: center; z-index: 1000; cursor: pointer;
+        }}
+        .unmute-text {{
+            background: #9146ff; color: white; padding: 20px 40px;
+            border-radius: 10px; font-size: 18px; font-weight: bold;
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <iframe id="player" allow="autoplay; fullscreen; microphone; camera" allowfullscreen></iframe>
+        <!-- Unmute overlay - auto-clicks to enable audio -->
+        <div id="unmuteOverlay" class="unmute-overlay">
+            <div class="unmute-text">🔊 Click to Enable Audio (Auto-clicking...)</div>
+        </div>
+        
+        <iframe id="player" 
+                allow="autoplay; fullscreen; microphone; camera; speaker-selection" 
+                allowfullscreen
+                sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-presentation">
+        </iframe>
+        
         <div class="info">
             <div id="title">TickleFitz Clips</div>
             <div>Clip <span id="num">1</span> of {len(clip_ids)}</div>
@@ -142,17 +161,41 @@ def clips():
         const clips = {clips_json};
         let i = 0;
         let progressInterval;
+        let audioEnabled = false;
+        
+        // Auto-enable audio immediately
+        function enableAudio() {{
+            audioEnabled = true;
+            document.getElementById('unmuteOverlay').style.display = 'none';
+            console.log('Audio enabled for autoplay');
+        }}
+        
+        // Multiple attempts to enable audio
+        document.addEventListener('DOMContentLoaded', () => {{
+            // Auto-click after 1 second
+            setTimeout(() => {{
+                enableAudio();
+                play();
+            }}, 1000);
+        }});
+        
+        // Manual click backup
+        document.getElementById('unmuteOverlay').addEventListener('click', () => {{
+            enableAudio();
+            if (!progressInterval) play();
+        }});
         
         function play() {{
             const domain = window.location.hostname;
             const player = document.getElementById('player');
             
-            // Force unmuted autoplay - try multiple approaches
-            player.src = `https://clips.twitch.tv/embed?clip=${{clips[i]}}&parent=${{domain}}&autoplay=true&muted=false`;
+            // Force unmuted with multiple parameters
+            const embedUrl = `https://clips.twitch.tv/embed?clip=${{clips[i]}}&parent=${{domain}}&autoplay=true&muted=false&volume=1.0&audio=true`;
             
-            // Also try setting iframe attributes for audio
-            player.setAttribute('allow', 'autoplay; fullscreen; microphone; camera');
-            player.setAttribute('allowfullscreen', 'true');
+            player.src = embedUrl;
+            
+            // Force iframe to allow audio
+            player.contentWindow && player.contentWindow.postMessage('{"event":"unmute"}', '*');
             
             document.getElementById('num').textContent = i + 1;
             document.getElementById('title').textContent = `TickleFitz Clip ${{i + 1}}`;
@@ -169,23 +212,37 @@ def clips():
                 if (progress >= 100) clearInterval(progressInterval);
             }}, 100);
             
+            // Try to unmute via postMessage to iframe
+            setTimeout(() => {{
+                try {{
+                    player.contentWindow.postMessage('{{"method":"setVolume","args":[1]}}', '*');
+                    player.contentWindow.postMessage('{{"method":"setMuted","args":[false]}}', '*');
+                }} catch(e) {{
+                    console.log('Could not postMessage to iframe:', e);
+                }}
+            }}, 2000);
+            
             i = (i + 1) % clips.length;
             
             // Auto-advance after exactly 30 seconds
             setTimeout(() => {{
                 document.getElementById('progress').style.width = '0%';
-                // Immediate transition to next clip
                 setTimeout(play, 100);
-            }}, 30000); // Exactly 30 seconds
+            }}, 30000);
         }}
         
-        // Auto-click to enable audio (some browsers require user interaction)
-        document.addEventListener('click', () => {{
-            // This ensures audio permissions are granted
-            console.log('Audio permissions enabled');
+        // Global audio context unlock (for browsers that need it)
+        window.addEventListener('load', () => {{
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) {{
+                const ctx = new AudioContext();
+                if (ctx.state === 'suspended') {{
+                    ctx.resume().then(() => {{
+                        console.log('AudioContext resumed');
+                    }});
+                }}
+            }}
         }});
-        
-        setTimeout(play, 1000);
     </script>
 </body>
 </html>
